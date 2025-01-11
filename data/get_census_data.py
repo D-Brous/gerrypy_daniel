@@ -3,7 +3,7 @@ import requests
 import pandas as pd
 import sys
 
-sys.path.append("../gerrypy_daniel")
+sys.path.append(".")
 from data.config import StateConfig
 import constants
 

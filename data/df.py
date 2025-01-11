@@ -1,7 +1,11 @@
 import pandas as pd
 import geopandas as gpd
+import numpy as np
 import os
+from scipy.spatial.distance import pdist, squareform
+import sys
 
+sys.path.append(".")
 import constants
 from data.config import StateConfig
 
@@ -20,12 +24,30 @@ class ShapeDataFrame(gpd.GeoDataFrame):
             )
         )
         shape_df = shape_df.to_crs("EPSG:3078")  # meters
-        # cgus = cgus[cgus.ALAND > 0]
+        # cgus = cgus[cgus.ALAND > 0] TODO: decide whether this is needed anywhere or not?
         if "GEOID10" in shape_df.columns:
             shape_df.rename(columns={"GEOID10": "GEOID"}, inplace=True)
-        return cls.from_gdf(
-            shape_df.sort_values(by="GEOID").reset_index(drop=True)
+        shape_df = shape_df.sort_values(by="GEOID").reset_index(drop=True)
+        if state_config.subregion is not None:
+            shape_df = shape_df.loc[state_config.subregion]
+        return cls.from_gdf(shape_df)
+
+    def get_subregion_df(self, subregion):
+        return self.from_gdf(self.loc[subregion])
+
+    def get_lengths(self, state_config: StateConfig) -> np.ndarray:
+        lengths_path = os.path.join(
+            constants.OPT_DATA_PATH, state_config.get_dirname(), "lengths.npy"
         )
+        if os.path.exists(lengths_path):
+            return np.load(lengths_path)
+        else:
+            centroids = pd.DataFrame(
+                data={"x": self.centroid.x, "y": self.centroid.y}
+            )
+            lengths = squareform(pdist(centroids))
+            np.save(lengths_path, lengths)
+            return lengths
 
 
 class DemoDataFrame(pd.DataFrame):
@@ -35,15 +57,41 @@ class DemoDataFrame(pd.DataFrame):
 
     @classmethod
     def from_config(cls, state_config: StateConfig) -> "DemoDataFrame":
-        acs_df = pd.read_csv(
-            os.path.join(
-                constants.DEMO_DATA_PATH,
-                state_config.get_dirname(),
-                "pops.csv",
-            ),
-            low_memory=False,
+        demo_df = (
+            pd.read_csv(
+                os.path.join(
+                    constants.DEMO_DATA_PATH,
+                    state_config.get_dirname(),
+                    "pops.csv",
+                ),
+                low_memory=False,
+            )
+            .sort_values("GEOID")
+            .reset_index(drop=True)
         )
-        return cls.from_df(acs_df.sort_values("GEOID").reset_index(drop=True))
+        if state_config.subregion is not None:
+            demo_df = demo_df.loc[state_config.subregion]
+        return cls.from_df(demo_df)
+
+    def get_subregion_df(self, subregion):
+        """_summary_
+
+        Args:
+            subregion (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        return self.from_df(self.loc[subregion])
+
+    def get_ideal_pop(self, n_districts: int) -> float:
+        """Returns the ideal district population given that we want to
+        have n_districts many districts
+
+        Args:
+            n_districts (int): Number of districts
+        """
+        return self["POP"].sum() / n_districts
 
 
 """
@@ -65,4 +113,23 @@ class ACSDataFrame(pd.DataFrame):
             low_memory=False,
         )
         return cls.from_df(acs_df.sort_values("GEOID").reset_index(drop=True))
+"""
+
+"""
+config = StateConfig("LA", 2010, "block_group")
+shape_df = ShapeDataFrame.from_config(config)
+import time
+
+
+n = 100
+shape_df = ShapeDataFrame.from_config(config)
+ti1 = time.thread_time()
+for i in range(1):
+    e = shape_df.get_lengths(config)
+tf1 = time.thread_time()
+ti2 = time.thread_time()
+for i in range(n):
+    e = shape_df.get_lengths(config)
+tf2 = time.thread_time()
+print(tf1 - ti1, (tf2 - ti2) / n)
 """

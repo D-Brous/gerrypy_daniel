@@ -1,6 +1,9 @@
+from typing import Optional, Union, Any
+import os
+import json
 import sys
 
-sys.path.append("../gerrypy_daniel")
+sys.path.append(".")
 
 from constants import (
     State,
@@ -9,14 +12,21 @@ from constants import (
     CapacitiesAssignmentMethod,
     CapacityWeights,
     Mode,
+    VapCol,
     STATE_LIST,
     GRANULARITY_LIST,
+    RESULTS_PATH,
 )
-from typing import Optional, Union, Any
 
 
 class StateConfig:
-    def __init__(self, state: State, year: int, granularity: Granularity):
+    def __init__(
+        self,
+        state: State,
+        year: int,
+        granularity: Granularity,
+        subregion: Optional[list[int]] = None,
+    ):
         if state not in STATE_LIST:
             raise ValueError("Invalid State")
         if granularity not in GRANULARITY_LIST:
@@ -24,9 +34,15 @@ class StateConfig:
         self.state = state
         self.year = year
         self.granularity = granularity
+        self.subregion = subregion
 
     def get_dirname(self):
         return "%s_%d_%s" % (self.state, self.year, self.granularity)
+
+    def save_to(self, file_path):
+        """file must have extension .json"""
+        with open(file_path, "w") as file:
+            json.dump(self, file, indent=0)
 
 
 class SHPConfig(StateConfig):
@@ -35,6 +51,7 @@ class SHPConfig(StateConfig):
         state: State,
         year: int,
         granularity: Granularity,
+        subregion: Optional[list[int]],
         n_root_samples: int,
         n_samples: int,
         max_sample_tries: int,
@@ -45,22 +62,22 @@ class SHPConfig(StateConfig):
         n_districts: int,
         population_tolerance: float,
         ideal_pop: float,
-        subregion: Optional[list[int]],
-        alpha_reoptimize_steps: int,
+        n_beta_reoptimize_steps: int,
         selection_method: CenterSelectionMethod,
         perturbation_scale: int,
         n_random_seeds: int,
         capacities: CapacitiesAssignmentMethod,
         capacity_weights: CapacityWeights,
+        col: VapCol,
         IP_gap_tol: float,
         IP_timeout: int,  # TODO: check if this is necessary
-        exact_partition_range: Optional[list[int]],
-        maj_black_partition_IPs: list[
+        final_partition_range: Optional[list[int]],
+        final_partition_ips: list[
             str
         ],  # TODO: consider implementing a more specific type for this. Also consider changing the name to fit something more broad, like leaf_node_partition_IPs or smth
-        alpha: float,
+        beta: float,
         epsilon: float,
-        use_black_maj_warm_start: bool,
+        use_warm_starts: bool,
         use_time_limit: bool,
         verbose: bool,
         event_logging: bool,  # TODO: check if this is necessary
@@ -69,6 +86,7 @@ class SHPConfig(StateConfig):
         ],  # TODO: think about potentially deleting? Or making this part of the code better. Also figure out the correct type.
         debug_file_2: Union[str, Any],
         callback_time_interval: int,  # TODO: consider getting rid of this
+        save_dirname: str,
         save_config: bool,
         save_tree: bool,
         save_cdms: bool,
@@ -91,25 +109,27 @@ class SHPConfig(StateConfig):
         self.population_tolerance = population_tolerance
         self.ideal_pop = ideal_pop
         self.subregion = subregion
-        self.alpha_reoptimize_steps = alpha_reoptimize_steps
+        self.n_beta_reoptimize_steps = n_beta_reoptimize_steps
         self.selection_method = selection_method
         self.perturbation_scale = perturbation_scale
         self.n_random_seeds = n_random_seeds
         self.capacities = capacities
         self.capacity_weights = capacity_weights
+        self.col = col
         self.IP_gap_tol = IP_gap_tol
         self.IP_timeout = IP_timeout
-        self.exact_partition_range = exact_partition_range
-        self.maj_black_partition_IPs = maj_black_partition_IPs
-        self.alpha = alpha
+        self.final_partition_range = final_partition_range
+        self.final_partition_ips = final_partition_ips
+        self.beta = beta
         self.epsilon = epsilon
-        self.use_black_maj_warm_start = use_black_maj_warm_start
+        self.use_warm_starts = use_warm_starts
         self.use_time_limit = use_time_limit
         self.verbose = verbose
         self.event_logging = event_logging
         self.debug_file = debug_file
         self.debug_file_2 = debug_file_2
         self.callback_time_interval = callback_time_interval
+        self.save_path = self.get_save_path(save_dirname)
         self.save_config = save_config
         self.save_tree = save_tree
         self.save_cdms = save_cdms
@@ -119,3 +139,9 @@ class SHPConfig(StateConfig):
         self.linear_objective = linear_objective
         self.mode = mode
         self.tree_time_str = tree_time_str
+
+    def get_save_path(self, save_dirname):
+        partial_save_path = os.path.join(RESULTS_PATH, self.get_dirname())
+        if not os.path.exists(partial_save_path):
+            os.mkdir(partial_save_path)
+        return os.path.join(partial_save_path, save_dirname)

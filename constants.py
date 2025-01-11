@@ -31,6 +31,9 @@ VapCol = Literal[
     "2MOREVAP",  # Two or more races, not hispanic or latino (P011011)
 ]
 PopCol = Literal["POP"]  # Total population (P008001)
+IPStr = Literal[
+    "base", "maj_cvap_approx", "maj_cvap_explicit", "maj_cvap_exact"
+]
 
 # def is_granularity  TODO?
 # def is_state  TODO?
@@ -41,8 +44,10 @@ GERRYPY_BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 DEMO_DATA_PATH = os.path.join(GERRYPY_BASE_PATH, "data", "demographics")
 CENSUS_SHAPE_PATH = os.path.join(GERRYPY_BASE_PATH, "data", "shapefiles")
 # ACS_DATA_PATH = os.path.join(GERRYPY_BASE_PATH, "data", "acs_data") #TODO: delete?
-# OPT_DATA_PATH = os.path.join(GERRYPY_BASE_PATH, "data", "optimization_caches")  #TODO: delete?
-
+OPT_DATA_PATH = os.path.join(
+    GERRYPY_BASE_PATH, "data", "optimization_caches"
+)  # TODO: delete?
+RESULTS_PATH = os.path.join(GERRYPY_BASE_PATH, "results")
 
 ###################### Other ##########################
 
@@ -62,3 +67,7 @@ COL_DICT_DEC_2010 = {
 }
 CENSUS_API_KEY = "e70c2da2298439c24a3bb24f6dd24a03fb30189b"
 # https://api.census.gov/data/2010/dec/sf1?get=GEO_ID,P008001,P011001,P011002,P011005,P011006,P011007,P011008,P011009,P011010,P011011&for=block%20group:*&in=county:*&in=state:22&key=e70c2da2298439c24a3bb24f6dd24a03fb30189b
+
+
+def flatten(lis_of_lis):
+    return [element for lis in lis_of_lis for element in lis]
