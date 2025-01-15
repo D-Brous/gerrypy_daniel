@@ -18,7 +18,6 @@ CenterSelectionMethod = Literal[
 ]
 CapacitiesAssignmentMethod = Literal["match", "compute"]
 CapacityWeights = Literal["fractional", "voronoi"]
-Mode = Literal["partition", "master", "both"]
 VapCol = Literal[
     "VAP",  # Total voting age population (P011001)
     "HVAP",  # Hispanic or Latino, any number of races (P011002)
@@ -29,6 +28,7 @@ VapCol = Literal[
     "NHPIVAP",  # Native Hawaiian or other Pacific Islander alone, not hispanic or latino (P011009)
     "OTHERVAP",  # One other race alone, not hispanic or latino (P011010)
     "2MOREVAP",  # Two or more races, not hispanic or latino (P011011)
+    "POCVAP",  # VAP - WVAP
 ]
 PopCol = Literal["POP"]  # Total population (P008001)
 IPStr = Literal[

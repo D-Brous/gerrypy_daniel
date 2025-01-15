@@ -57,9 +57,21 @@ def get_decennial_census_data(config: StateConfig):
     # Clean up the data
 
     df.rename(columns=col_dict, inplace=True)
+    for col in col_dict.values():
+        if col != "GEOID":
+            df[col] = df[col].astype(int)
+    check = df["VAP"].copy().to_numpy()
+    for col in list(col_dict.values())[3:]:
+        check -= df[col].to_numpy()
+    if check.any():
+        raise ValueError(
+            "Citizen voting age population columns don't add up to the total voting age population"
+        )
+
     df["GEOID"] = df["GEOID"].apply(lambda x: x.split("US")[1])
     df["GEOID"] = df["GEOID"].apply(lambda x: x.zfill(geoid_length))
     df = df[list(col_dict.values())].sort_values("GEOID")
+    df["POCVAP"] = df["VAP"] - df["WVAP"]
     df = df.set_index("GEOID")
     return df
 

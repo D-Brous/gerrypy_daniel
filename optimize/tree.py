@@ -68,16 +68,12 @@ class SHPNode:
         """
         return len(self.child_ids)
 
-    def update_child_ids(self, sample_ix, ip_str, ids):
+    def save_branch(self, sample_ix, ip_str, child_ids, ip_info):
         if sample_ix >= self.get_n_samples():
-            self.child_ids.append({ip_str: ids})
-        else:
-            self.child_ids[sample_ix][ip_str] = ids
-
-    def update_ip_info(self, sample_ix, ip_str, ip_info):
-        if sample_ix >= self.get_n_samples():
+            self.child_ids.append({ip_str: child_ids})
             self.ip_info.append({ip_str: ip_info})
         else:
+            self.child_ids[sample_ix][ip_str] = child_ids
             self.ip_info[sample_ix][ip_str] = ip_info
 
     def get_branch(self, sample_ix: int, ip_str: IPStr) -> list[int]:
@@ -90,7 +86,7 @@ class SHPNode:
             for branch in branch_dict.values()
         ]
 
-    def get_ip_branchs(self, ip_str: IPStr) -> list[list[int]]:
+    def get_ip_branches(self, ip_str: IPStr) -> list[list[int]]:
         return [
             branch_dict[ip_str]
             for branch_dict in self.child_ids
@@ -248,7 +244,6 @@ class SHPTree:
     ):
         self.all_internal_nodes[self.max_root_partition_id] = internal_nodes
         self.all_leaf_nodes[self.max_root_partition_id] = leaf_nodes
-        self.max_root_partition_id += 1
 
     def get_nodes(
         self, root_partition_id: int
@@ -293,9 +288,11 @@ class SHPTree:
 
         for node in ip_partitioned_nodes.values():
             ip_leaf_ids = flatten(node.get_ip_branches(ip_str))
-            ip_leaf_nodes.update({id: leaf_nodes[id] for id in ip_leaf_ids})
+            ip_leaf_nodes.update(
+                {id: leaf_nodes[id] for id in ip_leaf_ids if id in leaf_nodes}
+            )
 
-        return ip_leaf_ids
+        return ip_leaf_nodes
 
     def get_solution_nodes_dp(
         self,
@@ -360,7 +357,7 @@ class SHPTree:
         self,
         solution_nodes: dict[int, SHPNode],
     ) -> Partition:
-        partition = Partition()
+        partition = Partition(n_districts=self.config.n_districts)
         for district_id, leaf_node in enumerate(solution_nodes.values()):
             partition.set_part(district_id, leaf_node.subregion)
         return partition
@@ -379,7 +376,7 @@ class SHPTree:
     def n_districtings(self) -> int:
         """
         Dynamic programming method to compute the total number of
-        districtings
+        districtings, not including nodes generated from beta reoptimize
         """
 
         def recursive_compute(node: SHPNode, nodes: dict[int, SHPNode]):
@@ -390,11 +387,12 @@ class SHPTree:
             for branch in node.get_all_branches():
                 branch_districtings = 1
                 for child_id in branch:
-                    branch_districtings *= recursive_compute(
-                        nodes[child_id], nodes
-                    )
+                    if child_id in nodes:
+                        branch_districtings *= recursive_compute(
+                            nodes[child_id], nodes
+                        )
                 n_districtings += branch_districtings
-            return branch_districtings
+            return n_districtings
 
         all_nodes = dict()
         for root_partition_id in range(self.max_root_partition_id):

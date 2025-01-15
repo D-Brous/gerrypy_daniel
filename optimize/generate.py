@@ -34,31 +34,6 @@ class ColumnGenerator:
     """
 
     def __init__(self, config: SHPConfig, tree: SHPTree, logger: Logger):
-        """
-        Initialized with configuration dict
-        Args:
-            config: (dict) the following are the required keys
-                state: (str) 2 letter abbreviation
-                n_districts: (int)
-                population_tolerance: (float) ideal population +/- factor epsilon
-                max_sample_tries: (int) number of attempts at each node
-                n_samples: (int) the fan-out split width
-                n_root_samples: (int) the split width of the root node w
-                max_n_splits: (int) max split size z_max
-                min_n_splits: (int) min split size z_min
-                max_split_population_difference: (float) maximum
-                    capacity difference between 2 sibling nodes
-                event_logging: (bool) log events for visualization
-                verbose: (bool) print runtime information
-                selection_method: (str) seed selection method to use
-                perturbation_scale: (float) pareto distribution parameter
-                n_random_seeds: (int) number of fixed seeds in seed selection
-                capacities: (str) style of capacity matching/computing
-                capacity_weights: (str) 'voronoi' or 'fractional'
-                IP_gap_tol: (float) partition IP gap tolerance
-                IP_timeout: (float) maximum seconds to spend solving IP
-
-        """
         self.config = config
         self.tree = tree
         self.logger = logger
@@ -68,6 +43,7 @@ class ColumnGenerator:
         self.G = G
         self.demo_df = demo_df
         self.lengths = lengths
+        self.shape_df = ShapeDataFrame.from_config(config)
 
         self.ideal_pop = demo_df.get_ideal_pop(config.n_districts)
         self.max_pop_variation = self.ideal_pop * config.population_tolerance
@@ -108,7 +84,7 @@ class ColumnGenerator:
         parent.infeasible_children += 1
         if parent.infeasible_children > self.config.parent_resample_tries:
             # Failure couldn't be corrected -- retry from the next node up
-            return self.retry_sample(parent, internal_nodes, leaf_nodes)
+            return self.retry_sample(parent, internal_nodes, leaf_nodes, queue)
 
         sample_ix, ip_str, branch = parent.find_branch(problem_node.id)
         nodes_to_delete = set()
@@ -139,13 +115,19 @@ class ColumnGenerator:
         self,
     ) -> tuple[dict[int, SHPNode], dict[int, SHPNode]]:
         t_init = time.thread_time()
-        root_partition_incomplete = True
         self.logger.print_new_root_partition(self.tree.max_root_partition_id)
-        while root_partition_incomplete:
+        while True:
             try:
                 internal_nodes, leaf_nodes = self.attempt_generation()
                 self.tree.save_nodes(internal_nodes, leaf_nodes)
-                root_partition_incomplete = False
+                self.tree.generation_times[self.tree.max_root_partition_id] = (
+                    time.thread_time() - t_init
+                )
+                self.logger.print_completed_root_partition(
+                    self.tree.max_root_partition_id, self.tree
+                )
+                self.tree.max_root_partition_id += 1
+                return internal_nodes, leaf_nodes
             except (
                 RuntimeError
             ) as error:  # Errors propagated up to the root enough times for us to give up and try again from the beginning.
@@ -153,13 +135,6 @@ class ColumnGenerator:
                 self.logger.log_failed_root_partition(str(error))
                 self.root.delete_sample(self.tree.max_root_partition_id)
                 self.tree.failed_root_samples += 1
-        self.tree.generation_times[self.tree.max_root_partition_id] = (
-            time.thread_time() - t_init
-        )
-        self.logger.print_completed_root_partition(
-            self.tree.max_root_partition_id
-        )
-        return internal_nodes, leaf_nodes
 
     def attempt_generation(
         self,
@@ -173,7 +148,9 @@ class ColumnGenerator:
             children = self.sample_node(node)
             if len(children) == 0:  # Failure detected
                 # Try to correct failure
-                queue = self.retry_sample(node, internal_nodes, leaf_nodes)
+                queue = self.retry_sample(
+                    node, internal_nodes, leaf_nodes, queue
+                )
                 self.logger.log_failed_partition(node.id)
                 self.logger.log_queue(queue)
                 self.logger.log_n_nodes(
@@ -203,6 +180,7 @@ class ColumnGenerator:
         """
         t_init = time.thread_time()
         subregion_df = self.demo_df.get_subregion_df(node.subregion)
+        shape_subregion_df = self.shape_df.get_subregion_df(node.subregion)
 
         sample_ix = (
             node.get_n_samples()
@@ -226,7 +204,9 @@ class ColumnGenerator:
         ):
             child_sizes = node.sample_n_splits_and_child_sizes(self.config)
             child_centers = OrderedDict(
-                self.select_centers(subregion_df, child_sizes)
+                self.select_centers(
+                    subregion_df, shape_subregion_df, child_sizes
+                )
             )
             sample = []  # List of child nodes from the current sample
 
@@ -304,18 +284,19 @@ class ColumnGenerator:
 
         if warm_start is not None:
             districts = xs["districts"]
-            maj_black = xs["maj_black"]
+            maj_cvap = xs["maj_cvap"]
             prods = xs["prods"]
             for center in districts:
                 center_df = subregion_df.loc[districts[center].keys()]
-                is_maj_black = (
-                    center_df["BVAP"].sum() / center_df["VAP"].sum() > 0.5
+                is_maj_cvap = (
+                    center_df[self.config.col].sum() / center_df["VAP"].sum()
+                    > 0.5
                 )
-                maj_black[center].Start = is_maj_black
+                maj_cvap[center].Start = is_maj_cvap
                 for cgu in districts[center]:
                     districts[center][cgu].Start = warm_start[center][cgu]
                     prods[center][cgu].Start = (
-                        warm_start[center][cgu] * is_maj_black
+                        warm_start[center][cgu] * is_maj_cvap
                     )
             partition_ip.update()
 
@@ -349,18 +330,14 @@ class ColumnGenerator:
                 for center, subregion in districting.items()
             ]
             self.tree.n_successful_partitions[root_partition_id] += 1
-            node.update_child_ids(
-                sample_ix, ip_str, [child.id for child in child_nodes]
-            )
             status = partition_ip.Status
-            node.update_ip_info(
-                sample_ix,
-                ip_str,
-                (
-                    partition_time,
-                    status,
-                    partition_ip.getObjective().getValue(),
-                ),
+            ip_info = (
+                partition_time,
+                status,
+                partition_ip.getObjective().getValue(),
+            )
+            node.save_branch(
+                sample_ix, ip_str, [child.id for child in child_nodes], ip_info
             )
             if status == 2:
                 self.tree.n_optimal_partitions[root_partition_id] += 1
@@ -376,7 +353,10 @@ class ColumnGenerator:
             return ([], None)
 
     def select_centers(
-        self, subregion_df: DemoDataFrame, child_sizes: list[int]
+        self,
+        subregion_df: DemoDataFrame,
+        shape_subregion_df: ShapeDataFrame,
+        child_sizes: list[int],
     ) -> dict[int, int]:
         """
         Routes arguments to the right seed selection function.
@@ -418,7 +398,7 @@ class ColumnGenerator:
             raise ValueError("center selection_method not valid")
 
         center_capacities = get_capacities(
-            centers, child_sizes, subregion_df, self.config
+            centers, child_sizes, subregion_df, shape_subregion_df, self.config
         )
 
         return center_capacities
@@ -434,8 +414,8 @@ class ColumnGenerator:
     ) -> dict[int, SHPNode]:
         t_init = time.thread_time()
         # Save initial config
-        use_time_limit = self.config.use_time_limit
-        self.config.use_time_limit = False
+        ip_timeout = self.config.ip_timeout
+        self.config.ip_timeout = None
         initial_beta = self.config.beta
         # Create dict parent_information of parent_id : tuple of information,
         # where the tuple stores the following information at each index:
@@ -481,7 +461,7 @@ class ColumnGenerator:
                 parent_node = information[0]
                 self.config.beta = (information[2] + information[3]) / 2
                 child_nodes, _ = self.make_partition(
-                    self.demo_df.get_subregion_df[parent_node.subregion],
+                    self.demo_df.get_subregion_df(parent_node.subregion),
                     parent_node,
                     information[1],
                     root_partition_id,
@@ -505,259 +485,7 @@ class ColumnGenerator:
                 }
             )
 
-        self.config.use_time_limit = use_time_limit
+        self.config.ip_timeout = ip_timeout
         self.config.beta = initial_beta
-        self.logger.print_beta_reopt_time(time.thread_time() - t_init)
+        self.logger.print_beta_reopt_time(ip_str, time.thread_time() - t_init)
         return new_solution_nodes
-
-
-'''
-class DefaultCostFunction:
-    def __init__(self, lengths: np.ndarray):
-        self.lengths = lengths
-
-    def get_costs(self, subregion_df: DemoDataFrame, centers: list[int]):
-        population = subregion_df["POP"].values
-        index = list(subregion_df.index)
-        costs = self.lengths[np.ix_(centers, index)] * ((population / 1000))
-
-        costs **= 1 + random.random()
-        return {
-            center: {
-                index[cgu_ix]: cost
-                for cgu_ix, cost in enumerate(costs[center_ix])
-            }
-            for center_ix, center in enumerate(centers)
-        }
-
-        
-def make_pop_bounds(
-        self, child_centers: dict[int, int]
-    ) -> dict[int, dict[str, int]]:
-        """
-        Finds the upper and lower population bounds of a dict of center sizes
-        Args:
-            child_centers: (dict) {center index: # districts}
-
-        Returns: (dict) center index keys and upper/lower population bounds
-            and # districts as values in nested dict
-
-        """
-        pop_deviation = self.max_pop_variation
-        pop_bounds = {}
-        # Make the bounds for an area considering # area districts and tree level
-        for center, n_child_districts in child_centers.items():
-            if n_child_districts in self.config.final_partition_range:
-                levels_to_leaf = 1
-            else:
-                levels_to_leaf = max(math.ceil(math.log2(n_child_districts)), 1)
-            distr_pop = self.ideal_pop * n_child_districts
-
-            ub = distr_pop + pop_deviation / levels_to_leaf
-            lb = distr_pop - pop_deviation / levels_to_leaf
-
-            pop_bounds[center] = {
-                "ub": ub,
-                "lb": lb,
-                "n_districts": n_child_districts,
-            }
-
-        return pop_bounds
-
-def recompute_leaf_nodes(
-        self, internal_nodes: dict[int, SHPNode], leaf_nodes: dict[int, SHPNode]
-    ):
-        """
-        Recompute the leaf nodes of a root sample.
-        """
-        new_leaf_nodes = {}
-        parent_layer = {}
-        for id, node in leaf_nodes.items():
-            if (
-                internal_nodes[node.parent_id].n_districts
-                in self.config.final_partition_range
-            ):
-                parent_layer[node.parent_id] = internal_nodes[node.parent_id]
-            else:
-                new_leaf_nodes[id] = node
-        for id, node in parent_layer.items():
-            self.config.max_sample_tries = len(node.child_centers)
-            # node.child_ids
-            child_samples = self.sample_node(
-                node,
-                use_old_centers=True,
-                use_old_warm_starts=True,
-            )
-            for child in child_samples:
-                # n_maj_black += int(child.is_maj_black(self.demo_df))
-                new_leaf_nodes[child.id] = child
-        return new_leaf_nodes
-
-        
-    def make_viz_list(self):
-        """
-        Saves logging information useful for the SHP viz flask app
-
-        Returns: None
-        """
-        n_districtings = "0"
-        """
-        + str(
-            number_of_districtings(self.leaf_nodes, self.internal_nodes)
-        )
-        """
-        n_leaves = "nl" + str(len(self.leaf_nodes))
-        n_interior = "ni" + str(len(self.internal_nodes))
-        width = "w" + str(self.config.n_samples)
-        n_districts = "ndist" + str(self.config.n_districts)
-        save_time = str(int(time.time()))
-        save_name = "_".join(
-            [
-                self.config.state,
-                n_districtings,
-                n_leaves,
-                n_interior,
-                width,
-                n_districts,
-                save_time,
-            ]
-        )
-
-        json.dump(self.event_list, open(save_name + ".json", "w"))
-
-
-
-def generate_root_partition_old(self):
-        """
-        Main method for running the generation process.
-
-        Returns: None
-
-        """
-        tree_incomplete = True
-        leaf_nodes = {}
-        internal_nodes = {}
-        if self.config.verbose:
-            print(
-                "\n----------------Generating root sample number %d------------------\n"
-                % self.root_partition_id
-            )
-        while tree_incomplete:
-            # For each root partition, we attempt to populate the sample tree
-            # If failure in particular root, prune all work from that root
-            # partition. If successful, commit subtree to whole tree.
-            self.queue = [self.root]
-            try:
-
-                while len(self.queue) > 0:
-                    # node = self.queue.pop() #DFS
-                    node = self.queue.pop(0)  # BFS
-                    child_samples = self.sample_node(node)
-                    if len(child_samples) == 0:  # Failure detected
-                        self.failed_regions.append(node.subregion)
-                        # Try to correct failure
-
-                        if self.debug:
-                            self.config.debug_file.write(
-                                f"Failed split of node {node.id}.\n    Deleted nodes:\n    ["
-                            )
-                        self.retry_sample(
-                            node,
-                            internal_nodes,
-                            leaf_nodes,
-                            debug=self.debug,
-                        )
-                        if self.debug:
-                            # num_deleted_nodes = num_completed_samples - len(internal_nodes)
-                            # self.config.debug_file.write(f'Failed split: {num_deleted_nodes} nodes deleted. Remaining sample queue:\n[')
-                            self.config.debug_file.write(
-                                f"]\n    Remaining sample queue:\n    ["
-                            )
-                            for n in self.queue:
-                                self.config.debug_file.write(f"{n.id}, ")
-                            self.config.debug_file.write("]\n")
-                            num_nodes = (
-                                len(internal_nodes)
-                                + len(leaf_nodes)
-                                + len(self.queue)
-                            )
-                            self.config.debug_file.write(
-                                f"    Total number of nodes in tree after deletion: {num_nodes}\n"
-                            )
-                        continue
-                    for child in child_samples:
-                        if child.n_districts == 1:
-                            leaf_nodes[child.id] = child
-                            if self.debug:
-                                self.config.debug_file.write(
-                                    f"Logged leaf node {child.id} at time {time.thread_time()}\n"
-                                )
-                        else:
-                            self.queue.append(child)
-                            # if debug:
-                            #    self.config.debug_file.write(f'{child.id}, internal, {child.n_districts}, {len(child.subregion)}, {time.thread_time()}\n')
-                    internal_nodes[node.id] = node
-                    if self.debug:
-                        self.config.debug_file.write(
-                            f"Logged internal node {node.id} at time {time.thread_time()}\n"
-                        )
-                del internal_nodes[0]
-                self.internal_nodes.update(internal_nodes)
-                self.leaf_nodes.update(leaf_nodes)
-                self.root_partition_id += 1
-                tree_incomplete = False
-            except RuntimeError as error:  # Stop trying on root partition
-                if self.config.verbose:
-                    print(f"**Root sample failed: {str(error)}**")
-                if self.debug:
-                    self.config.debug_file.write(
-                        f"\n-------------------------------Root sample failed------------------------------- (last node: {node.id}; error msg: {str(error)})\n"
-                    )
-                self.root.child_ids = self.root.child_ids[:-1]
-                self.root.partition_times = self.root.partition_times[:-1]
-                self.failed_root_samples += 1
-        return internal_nodes, leaf_nodes
-'''
-if __name__ == "__main__":
-    center_selection_config = {
-        "selection_method": "uniform_random",  # one of
-        "perturbation_scale": 1,
-        "n_random_seeds": 1,
-        "capacities": "match",
-        "capacity_weights": "voronoi",
-    }
-    tree_config = {
-        "max_sample_tries": 25,
-        "n_samples": 2,
-        "n_root_samples": 5,
-        "max_n_splits": 5,
-        "min_n_splits": 2,
-        "max_split_population_difference": 1.5,
-        "event_logging": False,
-        "verbose": True,
-    }
-    gurobi_config = {
-        "IP_gap_tol": 1e-3,
-        "IP_timeout": 10,
-    }
-    pdp_config = {
-        "state": "NY",
-        "n_districts": 26,
-        "population_tolerance": 0.01,
-    }
-    base_config = {
-        **center_selection_config,
-        **tree_config,
-        **gurobi_config,
-        **pdp_config,
-    }
-    # cg = ColumnGenerator(base_config)
-    # cg.generate()
-    # import os
-    # import constants
-    # from optimize.logging import Logger
-    # logger = Logger(
-    #    True, os.path.join(constants.GERRYPY_BASE_PATH, "data/debug.txt")
-    # )
-    # logger.log_root_partition_failure("lol")
-    # logger.log_root_partition_failure("log")

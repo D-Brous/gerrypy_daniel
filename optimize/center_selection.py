@@ -5,11 +5,12 @@ sys.path.append(".")
 import math
 import random
 import numpy as np
+import pandas as pd
 from scipy.spatial.distance import cdist, pdist
 from sklearn.cluster import KMeans
 from spatial_utils import *
 
-from data.df import DemoDataFrame
+from data.df import DemoDataFrame, ShapeDataFrame
 from data.config import SHPConfig
 
 
@@ -103,7 +104,7 @@ def kmeans_seeds(
 
     """
 
-    weights = region_df.population.values + 1
+    weights = region_df.values + 1
     if perturbation_scale:
         weights = weight_perturbation(weights, perturbation_scale)
     if n_random_seeds:
@@ -153,6 +154,7 @@ def get_capacities(
     centers: list[int],
     child_sizes: list[int],
     subregion_df: DemoDataFrame,
+    shape_subregion_df: ShapeDataFrame,
     config: SHPConfig,
 ) -> dict[int, int]:
     """
@@ -169,10 +171,15 @@ def get_capacities(
     """
     n_children = len(child_sizes)
     total_seats = int(sum(child_sizes))
-
-    center_locs = subregion_df.loc[centers][["x", "y"]].values
-    locs = subregion_df[["x", "y"]].values
-    pop = subregion_df["population"].values
+    centroids = pd.DataFrame(
+        data={
+            "x": shape_subregion_df.centroid.x,
+            "y": shape_subregion_df.centroid.y,
+        }
+    )
+    center_locs = centroids.loc[centers][["x", "y"]].values
+    locs = centroids[["x", "y"]].values
+    pop = subregion_df["POP"].values
 
     dist_mat = cdist(locs, center_locs)
     if config.capacity_weights == "fractional":

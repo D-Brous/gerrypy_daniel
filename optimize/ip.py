@@ -1,8 +1,5 @@
 from gurobipy import *
-from gurobipy import quicksum
-from gurobipy import Model
-from gurobipy import GRB
-from gurobipy import min_
+from gurobipy import Model, Env, GRB, min_, quicksum
 import networkx as nx
 import numpy as np
 import random
@@ -13,6 +10,10 @@ from data.graph import Graph
 from optimize.tree import SHPNode
 from data.config import SHPConfig
 from constants import IPStr
+
+env = Env(empty=True)
+env.setParam("OutputFlag", 0)
+env.start()
 
 
 class IPSetup:
@@ -30,7 +31,9 @@ class IPSetup:
         self.subregion_df = subregion_df
         self.G = G.get_subgraph(node.subregion)
         self.lengths = lengths
-        self.edge_dists = self.G.get_edge_dists(child_centers)
+        self.edge_dists = self.G.get_edge_dists(
+            child_centers, config, node.subregion
+        )
         self.node = node
         self.child_centers = child_centers
         self.col = config.col
@@ -55,7 +58,7 @@ class IPSetup:
         """
         population = self.subregion_df["POP"].values
         index = list(self.subregion_df.index)
-        costs = self.lengths[np.ix_(self.child_centers, index)] * (
+        costs = self.lengths[np.ix_(list(self.child_centers.keys()), index)] * (
             (population / 1000)
         )
 
@@ -141,7 +144,7 @@ class IPSetup:
         }
 
     def make_partial_ip(self):
-        partition_ip = Model("partition")
+        partition_ip = Model("partition", env=env)
 
         # Create the variables
         districts = {}
@@ -191,9 +194,11 @@ class IPSetup:
 
         partition_ip.Params.LogToConsole = 0
         # partition_ip.Params.TimeLimit = len(population) / 200
-        partition_ip.Params.MIPGap = self.config.IP_gap_tol
-        if self.config.use_time_limit:
-            partition_ip.Params.TimeLimit = len(self.pop_dict) / 200
+        partition_ip.Params.MIPGap = self.config.ip_gap_tol
+        if self.config.ip_timeout is not None:
+            partition_ip.Params.TimeLimit = (
+                len(self.pop_dict) * self.config.ip_timeout
+            )
 
         return partition_ip, districts
 
@@ -352,432 +357,3 @@ class IPSetup:
             return self.make_maj_cvap_exact_ip()
         else:
             raise ValueError(f"{ip}, the given ip string, is not recognized.")
-
-
-'''
-def make_partition_IP_maj_cvap_approximate(ip_setup: IPSetup):
-    """
-    Creates the Gurobi model to partition a region.
-    Args:
-        costs: (dict) {center: {tract: cost}} The keys of the outer dict
-            are the only centers that are considered in the partition.
-             I.e. len(lengths) = z.
-        edge_dists: (dict) {center: {tract: hop_distance}} Same as lengths but
-            value is the shortest path hop distance (# edges between i and j)
-        G: (nx.Graph) The block adjacency graph
-        population: (dict) {tract int id: population}
-        pop_bounds: (dict) {center int id: {'lb': district population lower
-            bound, 'ub': tract population upper bound}
-        alpha: (int) The exponential cost term
-
-    Returns: (tuple (Gurobi partition model, model variables as a dict)
-
-    """
-    partition_ip = Model("partition")
-    districts = {}
-    maj_black = {}
-    # Create the variables
-    for center, cgus in ip_setup.costs.items():
-        districts[center] = {}
-        for cgu in cgus:
-            districts[center][cgu] = partition_ip.addVar(
-                vtype=GRB.BINARY, obj=ip_setup.costs[center][cgu]
-            )
-        maj_black[center] = partition_ip.addVar(vtype=GRB.BINARY)
-
-    # Each tract belongs to exactly one district
-    for j in ip_setup.population:
-        partition_ip.addLConstr(
-            quicksum(districts[i][j] for i in districts if j in districts[i])
-            == 1,
-            name="exactlyOne",
-        )
-    # Population tolerances
-    for i in districts:
-        partition_ip.addLConstr(
-            quicksum(
-                districts[i][j] * ip_setup.population[j] for j in districts[i]
-            )
-            >= ip_setup.pop_bounds[i]["lb"],
-            name="x%s_minsize" % i,
-        )
-
-        partition_ip.addLConstr(
-            quicksum(
-                districts[i][j] * ip_setup.population[j] for j in districts[i]
-            )
-            <= ip_setup.pop_bounds[i]["ub"],
-            name="x%s_maxsize" % i,
-        )
-
-    # connectivity
-    for center, sp_sets in ip_setup.connectivity_sets.items():
-        for node, sp_set in sp_sets.items():
-            if center == node:
-                continue
-            partition_ip.addLConstr(
-                districts[center][node]
-                <= quicksum(districts[center][nbor] for nbor in sp_set)
-            )
-
-    cvap = ip_setup.get_cvap_col()
-    ideal_vap = ip_setup.get_ideal_vap()
-    # majority black
-    for i in districts:
-        partition_ip.addLConstr(
-            quicksum(2 * districts[i][j] * cvap[j] for j in districts[i])
-            >= (1 + ip_setup.epsilon) * ideal_vap * maj_black[i]
-        )
-
-    partition_ip.setObjective(
-        ip_setup.beta
-        * quicksum(
-            districts[i][j] * ip_setup.costs[i][j]
-            for i in ip_setup.costs
-            for j in ip_setup.costs[i]
-        )
-        - (1 - ip_setup.beta) * quicksum(maj_black[i] for i in ip_setup.costs),
-        GRB.MINIMIZE,
-    )
-    partition_ip.Params.LogToConsole = 0
-    # partition_ip.Params.TimeLimit = len(population) / 200
-    partition_ip.update()
-
-    xs = {"districts": districts, "maj_black": maj_black}
-    return partition_ip, xs
-
-
-def make_partition_IP_MajBlack_explicit(ip_setup: IPSetup):
-    """
-    Creates the Gurobi model to partition a region while maximizing the
-        number of majority black subregions created.
-    Args:
-        ip_setup: (IPSetup) a setup configuration for all relevant IPs
-
-    Returns: (tuple (Gurobi partition model, model variables as a dict)
-
-    """
-    partition_ip = Model("partition")
-    districts = {}
-    maj_black = {}
-    dummy_vars = {}
-    prods = {}
-    # Create the variables
-    for center, cgus in costs.items():
-        districts[center] = {}
-        prods[center] = {}
-        dummy_vars[center] = {}
-        for cgu in cgus:
-            districts[center][cgu] = partition_ip.addVar(
-                vtype=GRB.BINARY, obj=costs[center][cgu]
-            )
-            prods[center][cgu] = partition_ip.addVar(
-                vtype=GRB.BINARY,
-            )
-            dummy_vars[center][cgu] = partition_ip.addVar(
-                vtype=GRB.BINARY,
-            )
-        maj_black[center] = partition_ip.addVar(vtype=GRB.BINARY)
-
-    # Each tract belongs to exactly one district
-    for j in population:
-        partition_ip.addLConstr(
-            quicksum(districts[i][j] for i in districts if j in districts[i])
-            == 1,
-            name="exactlyOne",
-        )
-    # Population tolerances
-    for i in districts:
-        partition_ip.addLConstr(
-            quicksum(districts[i][j] * population[j] for j in districts[i])
-            >= pop_bounds[i]["lb"],
-            name="x%s_minsize" % i,
-        )
-
-        partition_ip.addLConstr(
-            quicksum(districts[i][j] * population[j] for j in districts[i])
-            <= pop_bounds[i]["ub"],
-            name="x%s_maxsize" % i,
-        )
-
-    # connectivity
-    for center, sp_sets in connectivity_sets.items():
-        for node, sp_set in sp_sets.items():
-            if center == node:
-                continue
-            partition_ip.addLConstr(
-                districts[center][node]
-                <= quicksum(districts[center][nbor] for nbor in sp_set)
-            )
-
-    # majority black
-    for i in districts:
-        partition_ip.addLConstr(
-            quicksum(2 * districts[i][j] * BVAP[j] for j in districts[i])
-            >= quicksum(prods[i][j] * VAP[j] for j in districts[i]) + 1
-        )
-        for j in districts[i]:
-            partition_ip.addLConstr(prods[i][j] <= districts[i][j])
-            partition_ip.addLConstr(prods[i][j] <= maj_black[i])
-            partition_ip.addLConstr(
-                prods[i][j] >= districts[i][j] - 1 + dummy_vars[i][j]
-            )
-            partition_ip.addLConstr(
-                prods[i][j] >= maj_black[i] - dummy_vars[i][j]
-            )
-
-    partition_ip.setObjective(
-        alpha
-        * quicksum(
-            districts[i][j] * costs[i][j] for i in costs for j in costs[i]
-        )
-        - (1 - alpha) * quicksum(maj_black[i] for i in costs),
-        GRB.MINIMIZE,
-    )
-    partition_ip.Params.LogToConsole = 0
-    # partition_ip.Params.TimeLimit = len(population) / 200
-    partition_ip.update()
-
-    xs = {"districts": districts, "maj_black": maj_black, "prods": prods}
-    return partition_ip, xs
-
-
-def make_partition_IP_MajBlack(
-    costs, connectivity_sets, population, BVAP, VAP, pop_bounds, alpha
-):
-    """
-    Creates the Gurobi model to partition a region.
-    Args:
-        costs: (dict) {center: {tract: cost}} The keys of the outer dict
-            are the only centers that are considered in the partition.
-             I.e. len(lengths) = z.
-        edge_dists: (dict) {center: {tract: hop_distance}} Same as lengths but
-            value is the shortest path hop distance (# edges between i and j)
-        G: (nx.Graph) The block adjacency graph
-        population: (dict) {tract int id: population}
-        pop_bounds: (dict) {center int id: {'lb': district population lower
-            bound, 'ub': tract population upper bound}
-        alpha: (int) The exponential cost term
-
-    Returns: (tuple (Gurobi partition model, model variables as a dict)
-
-    """
-    partition_ip = Model("partition")
-    districts = {}
-    maj_black = {}
-    prods = {}
-    # Create the variables
-    for center, cgus in costs.items():
-        districts[center] = {}
-        prods[center] = {}
-        for cgu in cgus:
-            districts[center][cgu] = partition_ip.addVar(
-                vtype=GRB.BINARY, obj=costs[center][cgu]
-            )
-            prods[center][cgu] = partition_ip.addVar(
-                vtype=GRB.BINARY,
-            )
-        maj_black[center] = partition_ip.addVar(vtype=GRB.BINARY)
-
-    # Each tract belongs to exactly one district
-    for j in population:
-        partition_ip.addConstr(
-            quicksum(districts[i][j] for i in districts if j in districts[i])
-            == 1,
-            name="exactlyOne",
-        )
-    # Population tolerances
-    for i in districts:
-        partition_ip.addConstr(
-            quicksum(districts[i][j] * population[j] for j in districts[i])
-            >= pop_bounds[i]["lb"],
-            name="x%s_minsize" % i,
-        )
-
-        partition_ip.addConstr(
-            quicksum(districts[i][j] * population[j] for j in districts[i])
-            <= pop_bounds[i]["ub"],
-            name="x%s_maxsize" % i,
-        )
-
-    # connectivity
-    for center, sp_sets in connectivity_sets.items():
-        for node, sp_set in sp_sets.items():
-            if center == node:
-                continue
-            partition_ip.addConstr(
-                districts[center][node]
-                <= quicksum(districts[center][nbor] for nbor in sp_set)
-            )
-
-    # majority black
-    for i in districts:
-        partition_ip.addConstr(
-            quicksum(2 * districts[i][j] * BVAP[j] for j in districts[i])
-            >= quicksum(prods[i][j] * VAP[j] for j in districts[i]) + 1
-        )
-        for j in districts[i]:
-            partition_ip.addConstr(
-                prods[i][j] == min_(districts[i][j], maj_black[i])
-            )
-
-    partition_ip.setObjective(
-        (alpha / 1000)
-        * quicksum(
-            districts[i][j] * costs[i][j] for i in costs for j in costs[i]
-        )
-        - (1 - alpha) * quicksum(maj_black[i] for i in costs),
-        GRB.MINIMIZE,
-    )
-    partition_ip.Params.LogToConsole = 0
-    # partition_ip.Params.TimeLimit = len(population) / 200
-    partition_ip.update()
-
-    xs = {"districts": districts, "maj_black": maj_black, "prods": prods}
-    return partition_ip, xs
-
-
-def make_partition_IP(costs, connectivity_sets, population, pop_bounds):
-    """
-    Creates the Gurobi model to partition a region.
-    Args:
-        costs: (dict) {center: {tract: cost}} The keys of the outer dict
-            are the only centers that are considered in the partition.
-             I.e. len(lengths) = z.
-        edge_dists: (dict) {center: {tract: hop_distance}} Same as lengths but
-            value is the shortest path hop distance (# edges between i and j)
-        G: (nx.Graph) The block adjacency graph
-        population: (dict) {tract int id: population}
-        pop_bounds: (dict) {center int id: {'lb': district population lower
-            bound, 'ub': tract population upper bound}
-        alpha: (int) The exponential cost term
-
-    Returns: (tuple (Gurobi partition model, model variables as a dict)
-
-    """
-    partition_ip = Model("partition")
-    districts = {}
-    # Create the variables
-    for center, cgus in costs.items():
-        districts[center] = {}
-        for cgu in cgus:
-            districts[center][cgu] = partition_ip.addVar(
-                vtype=GRB.BINARY, obj=costs[center][cgu]
-            )
-    # Each tract belongs to exactly one district
-    for j in population:
-        partition_ip.addConstr(
-            quicksum(districts[i][j] for i in districts if j in districts[i])
-            == 1,
-            name="exactlyOne",
-        )
-    # Population tolerances
-    for i in districts:
-        partition_ip.addConstr(
-            quicksum(districts[i][j] * population[j] for j in districts[i])
-            >= pop_bounds[i]["lb"],
-            name="x%s_minsize" % i,
-        )
-
-        partition_ip.addConstr(
-            quicksum(districts[i][j] * population[j] for j in districts[i])
-            <= pop_bounds[i]["ub"],
-            name="x%s_maxsize" % i,
-        )
-
-    # connectivity
-    for center, sp_sets in connectivity_sets.items():
-        for node, sp_set in sp_sets.items():
-            if center == node:
-                continue
-            partition_ip.addConstr(
-                districts[center][node]
-                <= quicksum(districts[center][nbor] for nbor in sp_set)
-            )
-
-    partition_ip.setObjective(
-        quicksum(
-            districts[i][j] * costs[i][j] for i in costs for j in costs[i]
-        ),
-        GRB.MINIMIZE,
-    )
-    partition_ip.Params.LogToConsole = 0
-    # partition_ip.Params.TimeLimit = len(population) / 200
-    partition_ip.update()
-
-    xs = {"districts": districts}
-    return partition_ip, xs
-
-
-def edge_distance_connectivity_sets(edge_distance, G):
-    connectivity_set = {}
-    for center in edge_distance:
-        connectivity_set[center] = {}
-        for node in edge_distance[center]:
-            constr_set = []
-            dist = edge_distance[center][node]
-            for nbor in G[node]:
-                if edge_distance[center][nbor] < dist:
-                    constr_set.append(nbor)
-            connectivity_set[center][node] = constr_set
-    return connectivity_set
-
-
-def make_partition_IP_vectorized(
-    cost_coeffs, spt_matrix, population, pop_bounds
-):
-    """
-    Creates the Gurobi model to partition a region.
-    Args:
-        cost_coeffs: (dict) {center: {tract: distance}} The keys of the outer dict
-            are the only centers that are considered in the partition.
-             I.e. len(lengths) = z.
-        spt_matrix: (np.array) nonzero elements of row (i * B + j) are
-            equal to the set S_ij
-        G: (nx.Graph) The block adjacency graph
-        population: (dict) {tract int id: population}
-        pop_bounds: (dict) {center int id: {'lb': district population lower
-            bound, 'ub': tract population upper bound}
-
-    Returns: (tuple (Gurobi partition model, Gurobi MVar)
-
-    """
-    partition_ip = Model("partition")
-    n_centers, n_blocks = cost_coeffs.shape
-
-    # Assigment variables
-    assignment = partition_ip.addMVar(
-        shape=n_centers * n_blocks, vtype=GRB.BINARY, obj=cost_coeffs.flatten()
-    )
-
-    population_matrix = np.zeros((n_centers, n_blocks * n_centers))
-    for i in range(n_centers):
-        population_matrix[i, i * n_blocks : (i + 1) * n_blocks] = population
-
-    # Population balance
-    partition_ip.addConstr(
-        population_matrix @ assignment <= pop_bounds[:, 1]
-    )
-    partition_ip.addConstr(
-        population_matrix @ assignment >= pop_bounds[:, 0]
-    )
-
-    # Strict covering
-    partition_ip.addConstr(
-        np.tile(np.eye(n_blocks), (1, n_centers)) @ assignment == 1
-    )
-
-    # Subtree of shortest path tree
-    partition_ip.addConstrs(
-        spt_matrix[n_blocks * c : n_blocks * (c + 1), :]
-        @ assignment[n_blocks * c : n_blocks * (c + 1)]
-        >= assignment[n_blocks * c : n_blocks * (c + 1)]
-        for c in range(n_centers)
-    )
-
-    partition_ip.Params.LogToConsole = 0
-    # partition_ip.Params.TimeLimit = len(population) / 20
-    partition_ip.update()
-
-    return partition_ip, assignment
-'''

@@ -2,6 +2,7 @@ import networkx as nx
 import os
 import libpysal
 import pickle
+from typing import Optional
 import sys
 
 sys.path.append(".")
@@ -74,7 +75,12 @@ class Graph(nx.Graph):
     def get_subgraph(self, subregion: list[int]) -> "Graph":
         return nx.subgraph(self, subregion)
 
-    def get_edge_dists(self, centers: list[int]) -> dict[int, dict[int, int]]:
+    def get_edge_dists(
+        self,
+        centers: list[int],
+        state_config: StateConfig,
+        subregion: Optional[list[int]],
+    ) -> dict[int, dict[int, int]]:
         """Creates a dict of edge distances for pairs of nodes. If the
         graph is for the full state, then centers is ignored and a dict
         of edge distances for all pairs of nodes is returned (this is to
@@ -91,10 +97,10 @@ class Graph(nx.Graph):
             in the graph. The node1 keys are only the centers in centers
             if the graph is for a particular subregion
         """
-        if self.state_config.subregion is None:
+        if subregion is None:
             edge_dists_path = os.path.join(
                 constants.OPT_DATA_PATH,
-                self.state_config.get_dirname(),
+                state_config.get_dirname(),
                 "edge_dists.pickle",
             )
 
@@ -111,7 +117,7 @@ class Graph(nx.Graph):
             }
 
 
-## Below is stuff to potentially delete later
+## TODO: Below is stuff to potentially delete later
 
 
 class CguGraph(nx.Graph):
