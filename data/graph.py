@@ -9,7 +9,7 @@ sys.path.append(".")
 import constants
 from data.partition import Partition
 from data.config import StateConfig
-from data.df import ShapeDataFrame
+from data.shape_df import ShapeDataFrame
 
 
 class Graph(nx.Graph):
@@ -26,9 +26,11 @@ class Graph(nx.Graph):
 
     @classmethod
     def get_cgu_adjacency_graph(cls, state_config: StateConfig) -> "Graph":
+        optimization_cache_path = os.path.join(
+            constants.OPT_DATA_PATH, state_config.get_dirname()
+        )
         adjacency_graph_path = os.path.join(
-            constants.OPT_DATA_PATH,
-            state_config.get_dirname(),
+            optimization_cache_path,
             "G.gpickle",
         )
         subregion = state_config.subregion
@@ -40,6 +42,8 @@ class Graph(nx.Graph):
             state_config.subregion = None
             shape_df = ShapeDataFrame.from_config(state_config)
             G = cls.from_shape_df(shape_df)
+            if not os.path.exists(optimization_cache_path):
+                os.mkdir(optimization_cache_path)
             G.save_to(adjacency_graph_path)
 
         # Return graph or subgraph if specified
@@ -61,9 +65,8 @@ class Graph(nx.Graph):
         cls, state_config: StateConfig, partition: Partition
     ) -> "Graph":
         shape_df = ShapeDataFrame.from_config(state_config)
-        shape_df["Plan"] = partition.get_assignment()
-        district_shapes = shape_df.dissolve(by="Plan")
-        shape_list = district_shapes.geometry.to_list()
+        district_shape_df = shape_df.get_district_shape_df(partition)
+        shape_list = district_shape_df.geometry.to_list()
         return cls(
             libpysal.weights.Rook.from_iterable(shape_list).to_networkx()
         )
@@ -115,38 +118,3 @@ class Graph(nx.Graph):
                 center: nx.shortest_path_length(self, source=center)
                 for center in centers
             }
-
-
-## TODO: Below is stuff to potentially delete later
-
-
-class CguGraph(nx.Graph):
-    @classmethod
-    def from_shape_df(cls, shape_df):
-        shape_list = shape_df.geometry.to_list()
-        return libpysal.weights.Rook.from_iterable(shape_list).to_networkx()
-
-
-if __name__ == "__main__":
-    """
-    config = StateConfig("LA", 2010, "block_group")
-    shape_df = ShapeDataFrame.from_config(config)
-    import time
-
-    ti1 = time.thread_time()
-    n = 100
-    G = Graph.get_cgu_adjacency_graph(config)
-    for i in range(1):
-        e = G.get_edge_dists(config)
-    tf1 = time.thread_time()
-    ti2 = time.thread_time()
-    for i in range(n):
-        e = G.get_edge_dists(config)
-    tf2 = time.thread_time()
-    print(tf1 - ti1, (tf2 - ti2) / n)
-    """
-
-    config = StateConfig("LA", 2010, "block_group")
-    G = Graph.get_cgu_adjacency_graph(config)
-    e = G.get_edge_dists(config)
-    print(e)

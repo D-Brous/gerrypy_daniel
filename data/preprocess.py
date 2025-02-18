@@ -4,7 +4,8 @@ from scipy.spatial.distance import pdist, squareform
 
 sys.path.append("../gerrypy_daniel")
 from data.config import StateConfig
-from data.df import ShapeDataFrame, DemoDataFrame
+from data.demo_df import DemoDataFrame
+from data.shape_df import ShapeDataFrame
 from data.graph import Graph
 
 

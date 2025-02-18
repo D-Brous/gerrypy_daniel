@@ -1,21 +1,25 @@
 import time
 import numpy as np
+import sys
 
+sys.path.append(".")
 from constants import IPStr
 from data.config import SHPConfig
-from data.df import DemoDataFrame
+from data.demo_df import DemoDataFrame
 from data.partition import Partitions
 from optimize.tree import SHPNode, SHPTree
 from analyze.maj_min import n_maj_cvap
 
+# TODO clean up this file a bit
+
 
 class Logger:
     def __init__(self, logging: bool, printing: bool, debug_file_path: str):
-        self.logging = logging  # TODO
+        self.logging = logging
         self.printing = printing
         self.buffer = []
         if self.logging:
-            self.file = open(debug_file_path, "w")  # TODO
+            self.file = open(debug_file_path, "w")
 
     def close(self):
         if self.logging:
@@ -147,10 +151,14 @@ class Logger:
         n_partitions = config.n_root_samples * n_final_ips
         n_maj_cvap_arr = np.zeros((n_partitions), dtype=int)
         for partition_id in range(n_partitions):
-            partition = partitions.get(partition_id)
+            partition = partitions.get_plan(partition_id)
             n_maj_cvap_arr[partition_id] = n_maj_cvap(
                 config.col, partition, demo_df
             )
         for ip_ix, ip_str in enumerate(config.final_partition_ips):
             string += f"Numbers of maj {config.col} districts using {ip_str}: {n_maj_cvap_arr[ip_ix::n_final_ips]}\n"
         return string
+
+    @if_printing
+    def print_feasible(self, partitions_str: str):
+        return f"{partitions_str} are feasible\n"

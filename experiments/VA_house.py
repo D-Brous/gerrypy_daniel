@@ -6,10 +6,10 @@ from data.config import SHPConfig, PostProcessorConfig
 from optimize.generate import ColumnGenerator
 from optimize.postprocess import PostProcessor
 
-state = "LA"
-col = "POCVAP"
+state = "VA"
+col = "BVAP"
 n = 4
-pop_tol = 0.045
+pop_tol = 0.02
 
 
 state_config = {
@@ -68,13 +68,7 @@ local_reopt_config = {
 }
 pp_config = PostProcessorConfig(**state_config, **local_reopt_config)
 if __name__ == "__main__":
-    from optimize.tree import SHPTree
-    import os
-
-    tree = SHPTree.from_file(
-        os.path.join(shp_config.get_save_path(), "tree.pickle")
-    )
-    cg = ColumnGenerator(shp_config, tree=tree)
+    # cg = ColumnGenerator(shp_config)
     # cg.run_shp(
     #     save_config=True,
     #     save_tree=True,
@@ -83,10 +77,9 @@ if __name__ == "__main__":
     #     printing=True,
     #     run_beta_reoptimization=True,
     # )
-    cg.run_beta_reopt(save_partitions=True, logging=True, printing=True)
 
-    # shp_config.n_beta_reoptimize_steps = 0
-    # post_processor = PostProcessor(shp_config, pp_config)
-    # plan_ids = [0, 5, 6]  # [1, 2, 3, 4, 8, 9]  # list(range(10))  [0,5,6,7]
-    # for plan_id in plan_ids:
-    #     post_processor.priority_n_opt(n, plan_id)
+    shp_config.n_beta_reoptimize_steps = 0
+    post_processor = PostProcessor(shp_config, pp_config)
+    plan_ids = list(range(10))
+    for plan_id in plan_ids:
+        post_processor.priority_n_opt(n, plan_id)

@@ -1,8 +1,8 @@
 import math
 import random
 import numpy as np
+import pandas as pd
 from typing import Optional, Tuple
-
 import sys
 
 sys.path.append(".")
@@ -10,7 +10,8 @@ from constants import IPStr, VapCol, flatten
 from analyze.maj_min import is_maj_cvap
 from data.config import SHPConfig
 from data.partition import Partition
-from data.df import DemoDataFrame
+from data.demo_df import DemoDataFrame
+from data.shape_df import ShapeDataFrame
 
 
 class SHPNode:
@@ -42,9 +43,6 @@ class SHPNode:
         self.parent_id = parent_id
         self.center = center
 
-        # self.child_centers_dict = {}
-        # self.warm_starts = []
-
         # Lists of dictionaries where each dict is for a different sample,
         # and the dicts have information keyed by ip names
         self.child_ids = (
@@ -53,11 +51,6 @@ class SHPNode:
         self.ip_info = (
             []
         )  # List of dictionaries of ip information, i.e. 3-tuple of ip_time, ip_status, and ip_obj_val.
-
-        # self.ip_times = []
-        # self.ip_obj_values = []
-        # self.ips_used = []
-        # self.ip_statuses = []
 
         self.n_infeasible_partitions = 0
         self.infeasible_children = 0
@@ -153,7 +146,7 @@ class SHPNode:
             min(config.min_n_splits, n_distrs),
             min(config.max_n_splits, n_distrs),
         )
-        if n_distrs in config.final_partition_range:
+        if n_distrs <= config.final_partition_threshold:
             n_splits = n_distrs
 
         ub = max(
@@ -199,7 +192,7 @@ class SHPNode:
         return print_str
 
 
-from data.df import DemoDataFrame
+from data.demo_df import DemoDataFrame
 import pickle
 
 
@@ -245,19 +238,28 @@ class SHPTree:
         self.all_internal_nodes[self.max_root_partition_id] = internal_nodes
         self.all_leaf_nodes[self.max_root_partition_id] = leaf_nodes
 
+    def get_internal_nodes(self, root_partition_id: int) -> dict[int, SHPNode]:
+        if root_partition_id not in self.all_internal_nodes:
+            raise ValueError(
+                f"Root partition {root_partition_id} has no internal nodes. \
+                    Expected an int in the range [0, {self.max_root_partition_id}]"
+            )
+        return self.all_internal_nodes[root_partition_id]
+
+    def get_leaf_nodes(self, root_partition_id: int) -> dict[int, SHPNode]:
+        if root_partition_id not in self.all_leaf_nodes:
+            raise ValueError(
+                f"Root partition {root_partition_id} has no leaf nodes. \
+                    Expected an int in the range [0, {self.max_root_partition_id}]"
+            )
+        return self.all_leaf_nodes[root_partition_id]
+
     def get_nodes(
         self, root_partition_id: int
     ) -> tuple[dict[int, SHPNode], dict[int, SHPNode]]:
-        if (
-            root_partition_id not in self.all_internal_nodes
-            or root_partition_id not in self.all_leaf_nodes
-        ):
-            raise ValueError(
-                f"{root_partition_id} is not a valid root partition id in this tree. Expected a value in the range [0, {self.max_root_partition_id}]"
-            )
         return (
-            self.all_internal_nodes[root_partition_id],
-            self.all_leaf_nodes[root_partition_id],
+            self.get_internal_nodes(root_partition_id),
+            self.get_leaf_nodes(root_partition_id),
         )
 
     def save_to(self, file_path: str):
@@ -269,8 +271,8 @@ class SHPTree:
 
     def get_leaf_nodes_from_ip(
         self,
-        ip_str: IPStr,
         root_partition_id: int,
+        ip_str: IPStr,
     ):
         internal_nodes, leaf_nodes = self.get_nodes(root_partition_id)
         ip_partitioned_nodes = {}
@@ -281,7 +283,7 @@ class SHPTree:
             parent_node = self.root
             if parent_id != 0:
                 parent_node = internal_nodes[parent_id]
-            if parent_node.n_districts in self.config.final_partition_range:
+            if parent_node.n_districts <= self.config.final_partition_threshold:
                 ip_partitioned_nodes[parent_id] = parent_node
             else:
                 ip_leaf_nodes[node.id] = node
@@ -299,10 +301,13 @@ class SHPTree:
         internal_nodes: dict[int, SHPNode],
         leaf_nodes: dict[int, SHPNode],
         root_partition_id: int,
+        ip_str: IPStr,
         col: VapCol,
     ) -> dict[int, SHPNode]:
         demo_df = DemoDataFrame.from_config(self.config)
-        root_branch = self.root.get_branch(root_partition_id, "base")
+        if self.config.n_districts > self.config.final_partition_threshold:
+            ip_str = "base"
+        root_branch = self.root.get_branch(root_partition_id, ip_str)
         nodes = {**internal_nodes, **leaf_nodes}
         dp_queue = []
         parent_layer = [self.root]
@@ -357,7 +362,7 @@ class SHPTree:
         self,
         solution_nodes: dict[int, SHPNode],
     ) -> Partition:
-        partition = Partition(n_districts=self.config.n_districts)
+        partition = Partition(n_districts=len(solution_nodes))
         for district_id, leaf_node in enumerate(solution_nodes.values()):
             partition.set_part(district_id, leaf_node.subregion)
         return partition
@@ -400,40 +405,23 @@ class SHPTree:
             all_nodes.update({**internal_nodes, **leaf_nodes})
         return recursive_compute(self.root, all_nodes)
 
-
-'''
-class ExampleTree:
-    """
-    For illustration purposes.
-    """
-
-    def __init__(self, config, n_districts, level=0):
-        self.n_districts = n_districts
-        self.level = 0
-
-        if n_districts > 1:
-            children_n_distrs = SHPNode.sample_n_splits_and_child_sizes()
-            self.children = [
-                ExampleTree(config, n, level + 1) for n in children_n_distrs
-            ]
-        else:
-            self.children = None
-
-        self.max_levels_to_leaf = 0
-        self.max_layer()
-
-    def __repr__(self, level=0):
-        ret = "\t" * level + repr(self.n_districts) + "\n"
-        if self.children is not None:
-            for child in self.children:
-                ret += child.__repr__(level + 1)
-        return ret
-
-    def max_layer(self):
-        try:
-            to_leaf = 1 + max([child.max_layer() for child in self.children])
-            self.max_levels_to_leaf = to_leaf
-            return to_leaf
-        except TypeError:
-            return 0
-'''
+    def get_layer_above_solution_nodes(
+        self, ip_str: IPStr, root_partition_id: int
+    ) -> dict[int, SHPNode]:
+        internal_nodes = self.get_internal_nodes(root_partition_id)
+        leaf_nodes = self.get_leaf_nodes_from_ip(root_partition_id, ip_str)
+        solution_nodes = self.get_solution_nodes_dp(
+            internal_nodes,
+            leaf_nodes,
+            root_partition_id,
+            ip_str,
+            self.config.col,
+        )
+        layer_above_nodes = dict()
+        for leaf_id, leaf_node in solution_nodes.items():
+            parent_node = internal_nodes[leaf_node.parent_id]
+            if parent_node.n_districts <= self.config.final_partition_threshold:
+                layer_above_nodes[leaf_node.parent_id] = parent_node
+            else:
+                layer_above_nodes[leaf_id] = leaf_node
+        return layer_above_nodes

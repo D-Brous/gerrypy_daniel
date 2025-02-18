@@ -4,13 +4,19 @@ import pandas as pd
 import sys
 
 sys.path.append(".")
-from data.config import StateConfig
 import constants
+from data.config import StateConfig
+
+import os
+from io import BytesIO
+from ftplib import FTP
+import socket
+from zipfile import ZipFile
+from urllib.request import urlopen
 
 
 def get_decennial_census_data(config: StateConfig):
     # Build the url
-
     if config.year == 2010:
         col_dict = constants.COL_DICT_DEC_2010
         url = "https://api.census.gov/data/2010/dec/sf1?get="
@@ -19,8 +25,6 @@ def get_decennial_census_data(config: StateConfig):
         raise ValueError(
             f"The given year, {config.year}, is currently unsupported for census data."
         )
-
-    # url = "https://api.census.gov/data/%d/dec/sf1?get=" % config.year
     for census_col in col_dict.keys():
         url += "%s," % census_col
     url = url[:-1] + "&for="
@@ -44,7 +48,6 @@ def get_decennial_census_data(config: StateConfig):
     url += "&key=%s" % constants.CENSUS_API_KEY
 
     # Grab the data
-
     request = requests.get(url)
     try:
         json_df = request.json()
@@ -55,7 +58,6 @@ def get_decennial_census_data(config: StateConfig):
     df = pd.DataFrame(json_df[1:], columns=json_df[0])
 
     # Clean up the data
-
     df.rename(columns=col_dict, inplace=True)
     for col in col_dict.values():
         if col != "GEOID":
@@ -87,12 +89,63 @@ def download_decennial_census_data(config: StateConfig):
     if not os.path.exists(save_path):
         os.mkdir(save_path)
     df = get_decennial_census_data(config)
+    df.to_csv(csv_path)
     print(
         f"Successfully downloaded decennial census data for {config.state} in {config.year} at the {config.granularity} level"
     )
-    df.to_csv(csv_path)
+
+
+def download_shapefiles(config: StateConfig):
+    # Check if shapefiles are already downloaded
+    save_path = os.path.join(constants.CENSUS_SHAPE_PATH, config.get_dirname())
+    if os.path.exists(save_path):
+        print(
+            f"Ignored download since the data asked for already exists at the following directory: {save_path}"
+        )
+        return
+
+    # Build url
+    state = config.state
+    year = config.year
+    granularity = config.granularity
+    url = "/geo/tiger/TIGER%d/" % year
+
+    if granularity == "block":
+        url += "TABBLOCK/"
+    elif granularity == "block_group":
+        url += "BG/"
+    elif granularity == "tract":
+        url += "TRACT/"
+    elif granularity == "county":
+        url += "COUNTY/"
+
+    if year == 2010:
+        url += "%d/" % year
+
+    print(url)
+
+    # Login to census FTP server and download the desired shapefiles
+    try:
+        ftp = FTP("ftp.census.gov", timeout=1000)
+    except socket.timeout:
+        raise ConnectionError(f"Failed to connect to the census database")
+    ftp.login()
+    ftp.cwd(url)
+    os.mkdir(save_path)
+    state_fips = constants.FIPS_DICT[state]
+    for file_name in ftp.nlst():
+        fips = file_name.split("_")[2]
+        if fips != state_fips:
+            continue
+        resp = urlopen("https://www2.census.gov" + url + file_name)
+        zipfile = ZipFile(BytesIO(resp.read()))
+        zipfile.extractall(save_path)
+        print(
+            f"Successfully downloaded shapefiles for {config.state} in {year} at the {granularity} level"
+        )
 
 
 if __name__ == "__main__":
-    config = StateConfig("LA", 2010, "block_group")
+    config = StateConfig("VA", 2010, "block_group")
     download_decennial_census_data(config)
+    download_shapefiles(config)

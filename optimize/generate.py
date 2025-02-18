@@ -1,59 +1,287 @@
-import sys
-
-sys.path.append(".")
-
 import time
 import numpy as np
 import networkx as nx
 from typing import Optional
 from collections import OrderedDict
+import os
+import sys
 
-from optimize.center_selection import *
-
-from constants import VapCol, flatten
-from optimize.ip import *
-from optimize.tree import SHPNode, SHPTree
-from data.config import SHPConfig, StateConfig
-from data.df import DemoDataFrame, ShapeDataFrame
+sys.path.append(".")
+from data.config import SHPConfig
+from data.demo_df import DemoDataFrame
+from data.shape_df import ShapeDataFrame
+from data.partition import Partitions
 from data.graph import Graph
+from optimize.center_selection import *
+from constants import VapCol, IPStr, flatten
+from optimize.ip import IPSetup
+from optimize.tree import SHPNode, SHPTree
 from optimize.logging import Logger
-
-
-def load_opt_data(config: StateConfig):  # TODO: get rid of?
-    demo_df = DemoDataFrame.from_config(config)
-    G = Graph.get_cgu_adjacency_graph(config)
-    shape_df = ShapeDataFrame.from_config(config)
-    lengths = shape_df.get_lengths(config)
-    return demo_df, G, lengths
+from analyze.feasibility import check_feasibility
 
 
 class ColumnGenerator:
+    ROOT_PARTITION_FAILURE = "Root partition failed"
     """
     Generates columns with the Stochastic Hierarchical Paritioning algorithm.
     Maintains samples tree and logging data.
     """
 
-    def __init__(self, config: SHPConfig, tree: SHPTree, logger: Logger):
+    def __init__(
+        self,
+        config: SHPConfig,
+        tree: Optional[SHPTree] = None,
+    ):
         self.config = config
+        if tree is None:
+            tree = SHPTree(self.config)
         self.tree = tree
-        self.logger = logger
+        self.logger = Logger(False, False, "")
 
-        demo_df, G, lengths = load_opt_data(config)
-        lengths /= 1000  # TODO: get rid of?
-        self.G = G
-        self.demo_df = demo_df
-        self.lengths = lengths
+        self.demo_df = DemoDataFrame.from_config(config)
+        self.G = Graph.get_cgu_adjacency_graph(config)
         self.shape_df = ShapeDataFrame.from_config(config)
+        self.lengths = self.shape_df.get_lengths(config)
+        self.lengths /= 1000  # TODO: get rid of?
 
-        self.ideal_pop = demo_df.get_ideal_pop(config.n_districts)
+        self.partitions = Partitions()
+        if self.config.n_beta_reoptimize_steps > 0:
+            self.beta_reopt_partitions = Partitions()
+
+        self.save_path = config.get_save_path()
+        self.ideal_pop = self.demo_df.get_ideal_pop(config.n_districts)
         self.max_pop_variation = self.ideal_pop * config.population_tolerance
 
         self.root = tree.get_root()
 
-        # random.seed(0)
-        # np.random.seed(0)
-
         self.logger.log_root()
+
+    def run_shp(
+        self,
+        save_config: bool = False,
+        save_tree: bool = False,
+        save_partitions: bool = False,
+        logging: bool = False,
+        printing: bool = False,
+        run_beta_reoptimization: bool = False,
+    ):
+        """Performs generation and finds solutions for each root partition.
+        Also performs beta reoptimization if specified.
+        """
+        save_path = self.save_path
+        config_file_path = os.path.join(save_path, "config.json")
+        tree_file_path = os.path.join(save_path, "tree.pickle")
+        partitions_path = os.path.join(save_path, "partitions")
+        debug_file_path = os.path.join(save_path, "debug.txt")
+        if save_config or save_tree or save_partitions:
+            if not os.path.exists(save_path):
+                os.mkdir(save_path)
+            elif (
+                os.path.exists(config_file_path)
+                or os.path.exists(tree_file_path)
+                or os.path.exists(partitions_path)
+            ):
+                raise NameError(
+                    (
+                        "The current save path has already been used. "
+                        "Please give the save path an unused name."
+                    )
+                )
+        if save_partitions:
+            os.mkdir(partitions_path)
+        if save_config:
+            self.config.save_to(config_file_path)
+
+        self.logger = Logger(logging, printing, debug_file_path)
+        self.logger.print_generation_initiation()
+
+        for root_partition_id in range(self.config.n_root_samples):
+            internal_nodes, _ = self.generate_root_partition_tree()
+            if save_tree:
+                self.tree.save_to(tree_file_path)
+
+            n_final_ips = len(self.config.final_partition_ips)
+            for ip_ix, ip_str in enumerate(self.config.final_partition_ips):
+                ip_leaf_nodes = self.tree.get_leaf_nodes_from_ip(
+                    root_partition_id, ip_str
+                )
+                solution_nodes = self.tree.get_solution_nodes_dp(
+                    internal_nodes,
+                    ip_leaf_nodes,
+                    root_partition_id,
+                    ip_str,
+                    self.config.col,
+                )
+                partition_id = n_final_ips * root_partition_id + ip_ix
+                partition = self.tree.get_partition(solution_nodes)
+                self.partitions.set_plan(partition_id, partition)
+
+                if (
+                    run_beta_reoptimization
+                    and self.config.n_beta_reoptimize_steps > 0
+                ):
+                    beta_reopt_solution_nodes = self.beta_reoptimize(
+                        solution_nodes,
+                        internal_nodes,
+                        root_partition_id,
+                        ip_str,
+                        self.config.col,
+                        self.config.n_beta_reoptimize_steps,
+                    )
+                    beta_reopt_partition = self.tree.get_partition(
+                        beta_reopt_solution_nodes
+                    )
+                    self.beta_reopt_partitions.set_plan(
+                        partition_id, beta_reopt_partition
+                    )
+                if save_partitions:
+                    self.partitions.to_csv(
+                        os.path.join(partitions_path, "shp.csv"),
+                        self.config,
+                    )
+                    if (
+                        run_beta_reoptimization
+                        and self.config.n_beta_reoptimize_steps > 0
+                    ):
+                        self.beta_reopt_partitions.to_csv(
+                            os.path.join(
+                                partitions_path,
+                                "shp_br.csv",
+                            ),
+                            self.config,
+                        )
+
+        self.logger.log_generation_completion(self.tree)
+        self.logger.print_generation_completion(
+            self.config, self.tree, self.partitions
+        )
+
+        check_feasibility(self.config, self.partitions, self.demo_df, self.G)
+        self.logger.print_feasible("\nOriginal partitions")
+        if run_beta_reoptimization and self.config.n_beta_reoptimize_steps > 0:
+            check_feasibility(
+                self.config, self.beta_reopt_partitions, self.demo_df, self.G
+            )
+            self.logger.print_feasible("Beta reoptimized partitions")
+        self.logger.close()
+
+    def run_beta_reopt(
+        self,
+        save_partitions: bool = False,
+        logging: bool = False,
+        printing: bool = False,
+    ):
+        if self.config.n_beta_reoptimize_steps == 0:
+            return
+        save_path = self.save_path
+        csv_path = os.path.join(save_path, "partitions", "shp_br.csv")
+        debug_file_path = os.path.join(save_path, "debug.txt")
+        if save_partitions:
+            if not os.path.exists(save_path):
+                os.mkdir(save_path)
+            elif os.path.exists(csv_path):
+                raise NameError(
+                    (
+                        "Beta reopt partitions were already saved in the"
+                        " given save path."
+                    )
+                )
+        self.logger = Logger(logging, printing, debug_file_path)
+        for root_partition_id in range(self.config.n_root_samples):
+            internal_nodes = self.tree.get_internal_nodes(root_partition_id)
+            n_final_ips = len(self.config.final_partition_ips)
+            for ip_ix, ip_str in enumerate(self.config.final_partition_ips):
+                ip_leaf_nodes = self.tree.get_leaf_nodes_from_ip(
+                    root_partition_id, ip_str
+                )
+                solution_nodes = self.tree.get_solution_nodes_dp(
+                    internal_nodes,
+                    ip_leaf_nodes,
+                    root_partition_id,
+                    ip_str,
+                    self.config.col,
+                )
+                partition_id = n_final_ips * root_partition_id + ip_ix
+                beta_reopt_solution_nodes = self.beta_reoptimize(
+                    solution_nodes,
+                    internal_nodes,
+                    root_partition_id,
+                    ip_str,
+                    self.config.col,
+                    self.config.n_beta_reoptimize_steps,
+                )
+                beta_reopt_partition = self.tree.get_partition(
+                    beta_reopt_solution_nodes
+                )
+                self.beta_reopt_partitions.set_plan(
+                    partition_id, beta_reopt_partition
+                )
+                if save_partitions:
+                    self.beta_reopt_partitions.to_csv(
+                        csv_path,
+                        self.config,
+                    )
+
+    def generate_root_partition_tree(
+        self,
+    ) -> tuple[dict[int, SHPNode], dict[int, SHPNode]]:
+        t_init = time.thread_time()
+        self.logger.print_new_root_partition(self.tree.max_root_partition_id)
+        trial_id = 0
+        while trial_id < self.config.max_sample_tries:
+            try:
+                internal_nodes, leaf_nodes = self.attempt_generation()
+                self.tree.save_nodes(internal_nodes, leaf_nodes)
+                self.tree.generation_times[self.tree.max_root_partition_id] = (
+                    time.thread_time() - t_init
+                )
+                self.logger.print_completed_root_partition(
+                    self.tree.max_root_partition_id, self.tree
+                )
+                self.tree.max_root_partition_id += 1
+                return internal_nodes, leaf_nodes
+            except (
+                RuntimeError
+            ) as error:  # Errors propagated up to the root enough times for us to give up and try again from the beginning.
+                error_str = str(error)
+                self.logger.print_failed_root_partition(str(error_str))
+                self.logger.log_failed_root_partition(str(error_str))
+                if error_str != ColumnGenerator.ROOT_PARTITION_FAILURE:
+                    self.root.delete_sample(self.tree.max_root_partition_id)
+                self.tree.failed_root_samples += 1
+                trial_id += 1
+        raise RuntimeError("Failed to generate tree")
+
+    def attempt_generation(
+        self,
+    ) -> tuple[dict[int, SHPNode], dict[int, SHPNode]]:
+        leaf_nodes = {}
+        internal_nodes = {}
+        queue = [self.root]
+        while len(queue) > 0:
+            node = queue.pop(0)  # BFS
+            children = self.sample_node(node)
+            if len(children) == 0:  # Failure detected
+                # Try to correct failure
+                queue = self.retry_sample(
+                    node, internal_nodes, leaf_nodes, queue
+                )
+                self.logger.log_failed_partition(node.id)
+                self.logger.log_queue(queue)
+                self.logger.log_n_nodes(
+                    len(internal_nodes) + len(leaf_nodes) + len(queue)
+                )
+                continue
+            for child in children:
+                if child.is_leaf():
+                    leaf_nodes[child.id] = child
+                    self.logger.log_leaf_node(child.id)
+                else:
+                    queue.append(child)
+            internal_nodes[node.id] = node
+            self.logger.log_internal_node(node.id)
+        del internal_nodes[0]  # Removes root from dictionary
+        return internal_nodes, leaf_nodes
 
     def retry_sample(
         self,
@@ -76,7 +304,7 @@ class ColumnGenerator:
             return direct_descendents + indirect_descendants
 
         if problem_node.id == 0:
-            raise RuntimeError("Root partition failed")
+            raise RuntimeError(ColumnGenerator.ROOT_PARTITION_FAILURE)
         if problem_node.parent_id == 0:
             raise RuntimeError("Root partition region not subdivisible")
         parent = internal_nodes[problem_node.parent_id]
@@ -111,63 +339,6 @@ class ColumnGenerator:
         parent.delete_branch(sample_ix, ip_str)
         return [parent] + [n for n in queue if n.id not in nodes_to_delete]
 
-    def generate_root_partition_tree(
-        self,
-    ) -> tuple[dict[int, SHPNode], dict[int, SHPNode]]:
-        t_init = time.thread_time()
-        self.logger.print_new_root_partition(self.tree.max_root_partition_id)
-        while True:
-            try:
-                internal_nodes, leaf_nodes = self.attempt_generation()
-                self.tree.save_nodes(internal_nodes, leaf_nodes)
-                self.tree.generation_times[self.tree.max_root_partition_id] = (
-                    time.thread_time() - t_init
-                )
-                self.logger.print_completed_root_partition(
-                    self.tree.max_root_partition_id, self.tree
-                )
-                self.tree.max_root_partition_id += 1
-                return internal_nodes, leaf_nodes
-            except (
-                RuntimeError
-            ) as error:  # Errors propagated up to the root enough times for us to give up and try again from the beginning.
-                self.logger.print_failed_root_partition(str(error))
-                self.logger.log_failed_root_partition(str(error))
-                self.root.delete_sample(self.tree.max_root_partition_id)
-                self.tree.failed_root_samples += 1
-
-    def attempt_generation(
-        self,
-    ) -> tuple[dict[int, SHPNode], dict[int, SHPNode]]:
-        leaf_nodes = {}
-        internal_nodes = {}
-        queue = [self.root]
-        while len(queue) > 0:
-            # node = queue.pop() #DFS
-            node = queue.pop(0)  # BFS
-            children = self.sample_node(node)
-            if len(children) == 0:  # Failure detected
-                # Try to correct failure
-                queue = self.retry_sample(
-                    node, internal_nodes, leaf_nodes, queue
-                )
-                self.logger.log_failed_partition(node.id)
-                self.logger.log_queue(queue)
-                self.logger.log_n_nodes(
-                    len(internal_nodes) + len(leaf_nodes) + len(queue)
-                )
-                continue
-            for child in children:
-                if child.is_leaf():
-                    leaf_nodes[child.id] = child
-                    self.logger.log_leaf_node(child.id)
-                else:
-                    queue.append(child)
-            internal_nodes[node.id] = node
-            self.logger.log_internal_node(node.id)
-        del internal_nodes[0]  # Removes root from dictionary
-        return internal_nodes, leaf_nodes
-
     def sample_node(self, node: SHPNode) -> list[SHPNode]:
         """
         Generate children partitions of a region contained by [node].
@@ -198,6 +369,10 @@ class ColumnGenerator:
 
         trial_id = 0  # Number of sample attempts so far
         children = []  # List of all child nodes created
+        partition_ips = ["base"]
+        if node.n_districts <= self.config.final_partition_threshold:
+            partition_ips = self.config.final_partition_ips
+
         while (
             sample_ix < max_sample_ix
             and trial_id < self.config.max_sample_tries
@@ -209,13 +384,6 @@ class ColumnGenerator:
                 )
             )
             sample = []  # List of child nodes from the current sample
-
-            partition_ips = ["base"]
-            if (
-                self.config.final_partition_range is not None
-                and node.n_districts in self.config.final_partition_range
-            ):
-                partition_ips = self.config.final_partition_ips
 
             warm_start = None
             for ip_str in partition_ips:
@@ -410,7 +578,7 @@ class ColumnGenerator:
         root_partition_id: int,
         ip_str: IPStr,
         col: VapCol,
-        n_steps: int,  # TODO: maybe get rid of this and pull from config?
+        n_steps: int,
     ) -> dict[int, SHPNode]:
         t_init = time.thread_time()
         # Save initial config
@@ -442,7 +610,10 @@ class ColumnGenerator:
                     if parent_id == 0
                     else internal_nodes[parent_id]
                 )
-                if parent_node.n_districts in self.config.final_partition_range:
+                if (
+                    parent_node.n_districts
+                    <= self.config.final_partition_threshold
+                ):
                     parent_information[parent_id] = [
                         parent_node,
                         {leaf_node.center: 1},
@@ -452,32 +623,50 @@ class ColumnGenerator:
                         [leaf_node],
                     ]
                 else:
-                    new_solution_nodes[leaf_id:leaf_node]
+                    new_solution_nodes[leaf_id] = leaf_node
 
         # Beta reoptimize each of the parent nodes for n_steps rounds each,
         # and then save the leaf_nodes from the best partition over those rounds
         for parent_id, information in parent_information.items():
-            for _ in range(n_steps):
-                parent_node = information[0]
-                self.config.beta = (information[2] + information[3]) / 2
-                child_nodes, _ = self.make_partition(
-                    self.demo_df.get_subregion_df(parent_node.subregion),
-                    parent_node,
-                    information[1],
-                    root_partition_id,
-                    parent_node.get_n_samples(),
-                    ip_str,
-                )
-                n_maj_cvap = sum(
-                    int(node.is_maj_cvap(col, self.demo_df))
-                    for node in child_nodes
-                )
-                if n_maj_cvap < information[4]:
-                    parent_information[parent_id][3] = self.config.beta
-                else:
-                    parent_information[parent_id][2] = self.config.beta
-                    parent_information[parent_id][4] = n_maj_cvap
-                    parent_information[parent_id][5] = child_nodes
+            parent_node = information[0]
+            parent_subregion_df = self.demo_df.get_subregion_df(
+                parent_node.subregion
+            )
+            self.config.beta = 1
+            child_nodes, _ = self.make_partition(
+                parent_subregion_df,
+                parent_node,
+                information[1],
+                root_partition_id,
+                parent_node.get_n_samples(),
+                ip_str,
+            )
+            n_maj_cvap = sum(
+                int(node.is_maj_cvap(col, self.demo_df)) for node in child_nodes
+            )
+            if n_maj_cvap < information[4]:
+                for _ in range(n_steps):
+                    self.config.beta = (information[2] + information[3]) / 2
+                    child_nodes, _ = self.make_partition(
+                        parent_subregion_df,
+                        parent_node,
+                        information[1],
+                        root_partition_id,
+                        parent_node.get_n_samples(),
+                        ip_str,
+                    )
+                    n_maj_cvap = sum(
+                        int(node.is_maj_cvap(col, self.demo_df))
+                        for node in child_nodes
+                    )
+                    if n_maj_cvap < information[4]:
+                        parent_information[parent_id][3] = self.config.beta
+                    else:
+                        parent_information[parent_id][2] = self.config.beta
+                        parent_information[parent_id][4] = n_maj_cvap
+                        parent_information[parent_id][5] = child_nodes
+            else:
+                parent_information[parent_id][5] = child_nodes
             new_solution_nodes.update(
                 {
                     leaf_node.id: leaf_node

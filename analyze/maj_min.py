@@ -4,7 +4,7 @@ import sys
 
 sys.path.append(".")
 from constants import VapCol
-from data.df import DemoDataFrame
+from data.demo_df import DemoDataFrame
 from data.partition import Partition
 
 
@@ -73,7 +73,26 @@ def cvap_props(
     ]
 
 
-def n_maj_cvap(col: VapCol, partition: Partition, demo_df: DemoDataFrame):
+# TODO: Maybe merge these two props functions so they both check for zeros in the denominator
+
+
+def cvap_props_cgus(col: VapCol, demo_df: DemoDataFrame) -> list[float]:
+    """Returns the proportions of the voting age population of citizens
+    from VapCol col in the cgus of demo_df. For any cgus with zero
+    voting age population, the proportion returned is 0.
+
+    Args:
+        col (VapCol): Name of citizen voting age population column in
+            the demo_df
+        demo_df (DemoDataFrame): Dataframe of demographic data
+    """
+    vap = demo_df["VAP"].to_numpy()
+    return list(demo_df[col].to_numpy() / np.where(vap == 0, 1, vap))
+
+
+def n_maj_cvap(
+    col: VapCol, partition: Partition, demo_df: DemoDataFrame
+) -> int:
     """Returns the total number of districts in partition for which the
     citizens of VapCol col form a majority.
 

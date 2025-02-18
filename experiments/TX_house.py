@@ -6,10 +6,10 @@ from data.config import SHPConfig, PostProcessorConfig
 from optimize.generate import ColumnGenerator
 from optimize.postprocess import PostProcessor
 
-state = "LA"
-col = "POCVAP"
+state = "TX"
+col = "HVAP"
 n = 4
-pop_tol = 0.045
+pop_tol = 0.02
 
 
 state_config = {
@@ -87,6 +87,6 @@ if __name__ == "__main__":
 
     # shp_config.n_beta_reoptimize_steps = 0
     # post_processor = PostProcessor(shp_config, pp_config)
-    # plan_ids = [0, 5, 6]  # [1, 2, 3, 4, 8, 9]  # list(range(10))  [0,5,6,7]
+    # plan_ids = list(range(10))
     # for plan_id in plan_ids:
     #     post_processor.priority_n_opt(n, plan_id)

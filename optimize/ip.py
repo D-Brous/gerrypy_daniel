@@ -5,7 +5,7 @@ import numpy as np
 import random
 import math
 
-from data.df import DemoDataFrame
+from data.demo_df import DemoDataFrame
 from data.graph import Graph
 from optimize.tree import SHPNode
 from data.config import SHPConfig
@@ -108,7 +108,7 @@ class IPSetup:
         pop_bounds = {}
         # Make the bounds for an area considering # area districts and tree level
         for center, n_child_districts in self.child_centers.items():
-            if n_child_districts in self.config.final_partition_range:
+            if n_child_districts <= self.config.final_partition_threshold:
                 levels_to_leaf = 1
             else:
                 levels_to_leaf = max(math.ceil(math.log2(n_child_districts)), 1)

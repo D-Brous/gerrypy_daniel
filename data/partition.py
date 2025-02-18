@@ -1,15 +1,23 @@
-import numpy as np
 import pandas as pd
-from typing import Optional, Dict, List
+from typing import Optional
 import pickle
+import copy
 import sys
 
 sys.path.append(".")
-from data.df import DemoDataFrame
-from data.config import SHPConfig, StateConfig
+from constants import flatten
+from data.demo_df import DemoDataFrame
+from data.config import StateConfig
 
 
 class Partition:
+    """Stores partition as a dict, where the keys are the district ids
+    and the values are the district subregions, which are themselves
+    lists of ints representing cgu ids. District ids must be integers
+    and if there are n districts in the partition, then the district ids
+    must be the integers from 0 to n-1 inclusive.
+    """
+
     def __init__(self, n_districts: int, n_cgus: Optional[int] = None):
         self.n_districts = n_districts
         self.n_cgus = n_cgus
@@ -18,7 +26,7 @@ class Partition:
             self.districts[district_id] = []
 
     @classmethod
-    def from_assignment_ser(cls, assignment_ser: pd.Series):
+    def from_assignment_ser(cls, assignment_ser: pd.Series) -> "Partition":
         n_districts = assignment_ser.nunique()
         n_cgus = len(assignment_ser)
         partition = cls(n_districts, n_cgus=n_cgus)
@@ -30,33 +38,70 @@ class Partition:
         }
         return partition
 
-    def get_assignment(self) -> np.ndarray[int]:
+    def get_subpartition(self, district_ids: tuple[int]) -> "Partition":
+        n_districts = len(district_ids)
+        subpartition = Partition(n_districts=n_districts)
+        for district_ix in range(n_districts):
+            subpartition.set_part(
+                district_ix, self.get_part(district_ids[district_ix])
+            )
+        return subpartition
+
+    def get_assignment(self) -> pd.Series:
+        sorted_region = sorted(self.get_region())
+        assignment = pd.Series(index=sorted_region)
+        for district_id, district_subregion in self.districts.items():
+            assignment.loc[district_subregion] = district_id
+        return assignment
+        """
         if self.n_cgus is None:
             self.n_cgus = sum(len(cgus) for cgus in self.districts.values())
         assignment = np.zeros((self.n_cgus), dtype=int)
-        for district, cgus in self.districts.items():
-            assignment[cgus] = district
+        for district_id, district_subregion in self.districts.items():
+            assignment[district_subregion] = district_id
         return assignment
+        """
 
-    def get_parts(self) -> Dict[int, List[int]]:
+    def get_parts(self) -> dict[int, list[int]]:
         return self.districts
 
-    def get_part(self, district: int) -> List[int]:
-        if district not in self.districts:
+    def get_part(self, district_id: int) -> list[int]:
+        if district_id not in self.districts:
             raise ValueError(
-                f"Expected int in the interval [0, {self.n_districts - 1}] but got {district}"
+                f"Expected int in the interval [0, {self.n_districts - 1}] but got {district_id}"
             )
-        return self.districts[district]
+        return self.districts[district_id]
 
-    def set_part(self, district: int, cgus: List[int]) -> None:
-        if district < 0 or district >= self.n_districts:
+    def set_part(self, district_id: int, district_subregion: list[int]) -> None:
+        if district_id < 0 or district_id >= self.n_districts:
             raise ValueError(
-                f"Expected int in the interval [0, {self.n_districts - 1}] but got {district}"
+                f"Expected int in the interval [0, {self.n_districts - 1}] but got {district_id}"
             )
-        self.districts[district] = cgus
+        self.districts[district_id] = district_subregion
+
+    def get_region(self) -> list[int]:
+        return flatten(list(self.get_parts().values()))
+
+    def update_via_subpartition(
+        self, subpartition: "Partition", district_ids: tuple[int]
+    ):
+        for (
+            district_ix,
+            district_subregion,
+        ) in subpartition.get_parts().items():
+            self.set_part(district_ids[district_ix], district_subregion)
+
+    def __deepcopy__(self, memo):
+        partition_copy = Partition(self.n_districts, self.n_cgus)
+        partition_copy.districts = copy.deepcopy(self.districts)
+        return partition_copy
 
 
 class Partitions:
+    """Stores dict of partitions (plans), where the keys are plan ids.
+    The plan ids can be arbitrary integers, and the dict is unorded.
+    """
+
     def __init__(self):
         self.dict = dict()
 
@@ -64,13 +109,16 @@ class Partitions:
     def from_object_file(cls, obj_path: str) -> "Partitions":
         return pickle.load(open(obj_path, "rb"))
 
-    def set(self, id: int, partition: Partition):
+    def set_plan(self, id: int, partition: Partition):
         self.dict[id] = partition
 
-    def get(self, id: int) -> Partition:
+    def get_plan(self, id: int) -> Partition:
         if id not in self.dict:
             raise ValueError(f"{id} is not a valid id in this partition dict")
         return self.dict[id]
+
+    def get_plan_ids(self) -> list[int]:
+        return list(self.dict.keys())
 
     def to_object_file(self, obj_path: str):
         pickle.dump(self, open(obj_path, "wb"))
@@ -91,7 +139,7 @@ class Partitions:
         cols = df.columns.to_list()[1:]
         for col in cols:
             partition = Partition.from_assignment_ser(df[col])
-            partitions.set(int(col[5:]), partition)
+            partitions.set_plan(int(col[5:]), partition)
         return partitions
 
 

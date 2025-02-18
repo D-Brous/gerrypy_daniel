@@ -1,19 +1,19 @@
-import sys
-
-sys.path.append(".")
-
 import math
 import random
 import numpy as np
 import pandas as pd
-from scipy.spatial.distance import cdist, pdist
+from scipy.spatial.distance import cdist
 from sklearn.cluster import KMeans
 from spatial_utils import *
+import sys
 
-from data.df import DemoDataFrame, ShapeDataFrame
+sys.path.append(".")
+from data.demo_df import DemoDataFrame
+from data.shape_df import ShapeDataFrame
 from data.config import SHPConfig
 
 
+# TODO: finish updating this file
 def uniform_random(region_df, n_centers):
     """
     Uniform-random center selection function.
@@ -189,8 +189,6 @@ def get_capacities(
         assignment = np.argmin(dist_mat, axis=1)
         weights = np.zeros((len(locs), len(centers)))
         weights[np.arange(len(assignment)), assignment] = 1
-    else:
-        raise ValueError("Invalid capacity weight method")
 
     center_assignment_score = np.sum(weights * pop[:, None], axis=0)
     center_assignment_score /= center_assignment_score.sum()
