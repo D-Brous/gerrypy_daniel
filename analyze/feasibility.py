@@ -13,15 +13,15 @@ from data.partition import Partition, Partitions
 def check_feasibility(
     config: SHPConfig, partitions: Partitions, demo_df: DemoDataFrame, G: Graph
 ):
-    n_plans = config.n_root_samples
-    if len(config.final_partition_ips) > 0:
-        n_plans *= len(config.final_partition_ips)
+    # n_plans = config.n_root_samples
+    # if len(config.final_partition_ips) > 0:
+    #    n_plans *= len(config.final_partition_ips)
     n_districts = config.n_districts
     n_cgus = demo_df.get_n_cgus()
     ideal_pop = demo_df.get_ideal_pop(n_districts)
     district_pop_ub = (1 + config.population_tolerance) * ideal_pop
     district_pop_lb = (1 - config.population_tolerance) * ideal_pop
-    for plan_id in range(n_plans):
+    for plan_id in partitions.get_plan_ids():
         partition = partitions.get_plan(plan_id)
         error_str = check_plan_feasibility(
             plan_id,

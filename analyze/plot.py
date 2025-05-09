@@ -14,7 +14,12 @@ from data.shape_df import ShapeDataFrame
 from data.partition import Partitions
 from analyze.maj_min import n_maj_cvap
 from analyze.compactness import polsby_poppers
-from constants import VapCol, SHORTBURSTS_MAXIMUMS
+from constants import (
+    VapCol,
+    SHORTBURSTS_MAXIMUMS,
+    SMOOTH_SIX_COLORS,
+    SIX_COLORS,
+)
 
 """
 def n_maj_cvap_arr(
@@ -66,10 +71,13 @@ def get_partitions(
 
 
 class PlotGenerator:
-    WHISKER_FIGSIZE = (7, 3.5)
-    SCATTER_FIGSIZE = (7, 3.5)
+    WHISKER_FIGSIZE = (7, 2.5)
+    SCATTER_FIGSIZE = (7, 2.5)
     WHISKER_FILE_NAME = "whisker.pdf"
     SCATTER_FILE_NAME = "scatter.pdf"
+    SHP_COLOR = SIX_COLORS[0]  # "red"
+    SHP_BR_COLOR = SIX_COLORS[3]  # "green"
+    SHP_LOCAL_REOPT_COLOR = SIX_COLORS[4]  # "blue"
 
     def __init__(self, config: SHPConfig):
         self.config = config
@@ -140,7 +148,7 @@ class PlotGenerator:
 
     def set_title(self, ax: Axes):
         ax.set_title(
-            f"{self.config.state} State House {self.config.col} ({self.config.n_districts} seats)"
+            f"{self.config.state} State House {self.config.col} {self.config.year} ({self.config.n_districts} seats)"
         )
 
     def set_xticks(self, ax: Axes):
@@ -205,28 +213,34 @@ class PlotGenerator:
         n_maj_cvaps_pp = self.n_maj_cvap_arr(partitions_pp)
         fig, ax = plt.subplots(figsize=PlotGenerator.WHISKER_FIGSIZE)
         # Plot vertical bar
-        sb_max = SHORTBURSTS_MAXIMUMS[self.config.state][self.config.col]
+        sb_max = SHORTBURSTS_MAXIMUMS[self.config.state][self.config.year][
+            self.config.col
+        ]
         ax.axvline(
             x=sb_max,
             color="black",
             linestyle="--",
             linewidth=2,
-            label="Short Bursts Maximum",
+            label="Short Bursts",
         )
 
         # Plot horizontal bars with whiskers
-        self.plot_whisker_bar(n_maj_cvaps_shp, ax, "red", 3, "Base")
+        self.plot_whisker_bar(n_maj_cvaps_shp, ax, self.SHP_COLOR, 3, "Base")
         self.plot_whisker_bar(
-            n_maj_cvaps_shp_br, ax, "green", 2, "Beta Reoptimized"
+            n_maj_cvaps_shp_br, ax, self.SHP_BR_COLOR, 2, "Beta Reoptimized"
         )
         self.plot_whisker_bar(
-            n_maj_cvaps_pp, ax, "blue", 1, "Local Reoptimized"
+            n_maj_cvaps_pp,
+            ax,
+            self.SHP_LOCAL_REOPT_COLOR,
+            1,
+            "Local Reoptimized",
         )
 
         # Finish up plot
-        self.set_xlabel(ax)
+        # self.set_xlabel(ax)
         self.set_xticks(ax)
-        ax.set_ylabel("Set of Plans")
+        # ax.set_ylabel("Set of Plans")
         # ax.set_yticks(
         #     [3, 2, 1], ["Base", "Beta Reoptimized", "Local Reoptimized"]
         # )
@@ -250,26 +264,30 @@ class PlotGenerator:
         ppcs_pp = self.avg_ppc_arr(partitions_pp, "polsby_poppers_pp_pr.npy")
         fig, ax = plt.subplots(figsize=PlotGenerator.SCATTER_FIGSIZE)
         ax.scatter(
-            n_maj_cvaps_shp, ppcs_shp, color="red", marker="s", label="Base"
+            n_maj_cvaps_shp,
+            ppcs_shp,
+            color=self.SHP_COLOR,
+            marker="s",
+            label="Base",
         )
         ax.scatter(
             n_maj_cvaps_shp_br,
             ppcs_shp_br,
-            color="green",
+            color=self.SHP_BR_COLOR,
             marker="o",
             label="Beta Reoptimized",
         )
         ax.scatter(
             n_maj_cvaps_pp,
             ppcs_pp,
-            color="blue",
+            color=self.SHP_LOCAL_REOPT_COLOR,
             marker="d",
             label="Local Reoptimized",
         )
         self.set_xticks(ax)
         ax.legend(loc="upper right")
-        self.set_xlabel(ax)
-        ax.set_ylabel("Average Polsby Popper Compactness")
+        # self.set_xlabel(ax)
+        # ax.set_ylabel("Average Polsby Popper Compactness")
         self.set_title(ax)
         self.save_fig(fig, pdf_path)
 
@@ -280,27 +298,32 @@ if __name__ == "__main__":
     from experiments.VA_house import shp_config as va_shp_config
     from experiments.NM_house import shp_config as nm_shp_config
 
+    year = 2020
     for col in ["BVAP", "POCVAP"]:
         la_shp_config.col = col
+        la_shp_config.year = year
         la_shp_config.save_dirname = f"state_house_{col}"
         la_pg = PlotGenerator(la_shp_config)
         la_pg.make_whisker_plot()
         la_pg.make_scatter_plot()
-    for col in ["BVAP", "HVAP"]:
-        tx_shp_config.col = col
-        tx_shp_config.save_dirname = f"state_house_{col}"
-        tx_pg = PlotGenerator(tx_shp_config)
-        tx_pg.make_whisker_plot()
-        tx_pg.make_scatter_plot()
-    for col in ["BVAP", "POCVAP"]:
-        va_shp_config.col = col
-        va_shp_config.save_dirname = f"state_house_{col}"
-        va_pg = PlotGenerator(va_shp_config)
-        va_pg.make_whisker_plot()
-        va_pg.make_scatter_plot()
-    for col in ["HVAP", "POCVAP"]:
-        nm_shp_config.col = col
-        nm_shp_config.save_dirname = f"state_house_{col}"
-        nm_pg = PlotGenerator(nm_shp_config)
-        nm_pg.make_whisker_plot()
-        nm_pg.make_scatter_plot()
+    # for col in ["BVAP", "HVAP"]:
+    #     tx_shp_config.col = col
+    #     tx_shp_config.year = year
+    #     tx_shp_config.save_dirname = f"state_house_{col}"
+    #     tx_pg = PlotGenerator(tx_shp_config)
+    #     tx_pg.make_whisker_plot()
+    #     tx_pg.make_scatter_plot()
+    # for col in ["BVAP", "POCVAP"]:
+    #     va_shp_config.col = col
+    #     va_shp_config.year = year
+    #     va_shp_config.save_dirname = f"state_house_{col}"
+    #     va_pg = PlotGenerator(va_shp_config)
+    #     va_pg.make_whisker_plot()
+    #     va_pg.make_scatter_plot()
+    # for col in ["HVAP", "POCVAP"]:
+    #     nm_shp_config.col = col
+    #     nm_shp_config.year = year
+    #     nm_shp_config.save_dirname = f"state_house_{col}"
+    #     nm_pg = PlotGenerator(nm_shp_config)
+    #     nm_pg.make_whisker_plot()
+    #     nm_pg.make_scatter_plot()

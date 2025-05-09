@@ -6,3 +6,4 @@ scikit-learn==1.2.2
 spatial_utils==0.0.1
 shapely==2.0.1
 gurobipy==10.0.2
+gerrychain==0.3.2

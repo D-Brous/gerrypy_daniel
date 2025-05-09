@@ -7,14 +7,14 @@ from optimize.generate import ColumnGenerator
 from optimize.postprocess import PostProcessor
 
 state = "NM"
-col = "HVAP"
+col = "POCVAP"
 n = 4
 pop_tol = 0.045
 
 
 state_config = {
     "state": state,
-    "year": 2010,
+    "year": 2020,
     "granularity": "block_group",
     "subregion": None,
 }

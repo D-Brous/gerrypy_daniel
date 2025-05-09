@@ -170,6 +170,8 @@ ComparativeDistrictMapFunc = Literal[
     "colored_cvap_prop_shaded", "maj_cvap_outlined_cvap_prop_shaded_cgus"
 ]
 
+Interpretation = Literal["any_part", "single"]
+
 ############################ State Information #################################
 
 FIPS_DICT = {
@@ -284,6 +286,7 @@ GERRYPY_BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 DEMO_DATA_PATH = os.path.join(GERRYPY_BASE_PATH, "data", "demographics")
 CENSUS_SHAPE_PATH = os.path.join(GERRYPY_BASE_PATH, "data", "shapefiles")
 OPT_DATA_PATH = os.path.join(GERRYPY_BASE_PATH, "data", "optimization_caches")
+SEED_PATH = os.path.join(GERRYPY_BASE_PATH, "data", "seeds")
 RESULTS_PATH = os.path.join(GERRYPY_BASE_PATH, "results")
 
 ###################### Census Data Query Inforamtion ###########################
@@ -304,6 +307,154 @@ COL_DICT_DEC_2010 = {
     "P011011": "2MOREVAP",
 }
 
+COL_DICT_DEC_2020_ANY_PART = {  # 2020/dec/pl
+    "GEOID": ["GEO_ID"],
+    "POP": ["P1_001N"],
+    "VAP": ["P3_001N"],
+    "HVAP": ["P4_002N"],
+    "WVAP": ["P3_003N"],  # 1
+    "BVAP": ["P3_004N"]  # 1
+    + ["P3_011N", "P3_016N", "P3_017N", "P3_018N", "P3_019N"]  # 2
+    + [
+        "P3_027N",
+        "P3_028N",
+        "P3_029N",
+        "P3_030N",
+        "P3_037N",
+        "P3_038N",
+        "P3_039N",
+        "P3_040N",
+        "P3_041N",
+        "P3_042N",
+    ]  # 3
+    + [
+        "P3_048N",
+        "P3_049N",
+        "P3_050N",
+        "P3_051N",
+        "P3_052N",
+        "P3_053N",
+        "P3_058N",
+        "P3_059N",
+        "P3_060N",
+        "P3_061N",
+    ]  # 4
+    + ["P3_064N", "P3_065N", "P3_066N", "P3_067N", "P3_069N"]  # 5
+    + ["P3_071N"],  # 6
+    "AMINVAP": ["P3_005N"]  # 1
+    + ["P3_012N", "P3_016N", "P3_020N", "P3_021N", "P3_022N"]  # 2
+    + [
+        "P3_027N",
+        "P3_031N",
+        "P3_032N",
+        "P3_033N",
+        "P3_037N",
+        "P3_038N",
+        "P3_039N",
+        "P3_043N",
+        "P3_044N",
+        "P3_045N",
+    ]  # 3
+    + [
+        "P3_048N",
+        "P3_049N",
+        "P3_050N",
+        "P3_054N",
+        "P3_055N",
+        "P3_056N",
+        "P3_058N",
+        "P3_059N",
+        "P3_060N",
+        "P3_062N",
+    ]  # 4
+    + ["P3_064N", "P3_065N", "P3_066N", "P3_068N", "P3_069N"]  # 5
+    + ["P3_071N"],  # 6
+    "ASIANVAP": ["P3_006N"]  # 1
+    + ["P3_013N", "P3_017N", "P3_020N", "P3_023N", "P3_024N"]  # 2
+    + [
+        "P3_028N",
+        "P3_031N",
+        "P3_034N",
+        "P3_035N",
+        "P3_037N",
+        "P3_040N",
+        "P3_041N",
+        "P3_043N",
+        "P3_044N",
+        "P3_046N",
+    ]  # 3
+    + [
+        "P3_048N",
+        "P3_051N",
+        "P3_052N",
+        "P3_054N",
+        "P3_055N",
+        "P3_057N",
+        "P3_058N",
+        "P3_059N",
+        "P3_061N",
+        "P3_062N",
+    ]  # 4
+    + ["P3_064N", "P3_065N", "P3_067N", "P3_068N", "P3_069N"]  # 5
+    + ["P3_071N"],  # 6
+    "NHPIVAP": ["P3_007N"]  # 1
+    + ["P3_014N", "P3_018N", "P3_021N", "P3_023N", "P3_025N"]  # 2
+    + [
+        "P3_029N",
+        "P3_032N",
+        "P3_034N",
+        "P3_036N",
+        "P3_038N",
+        "P3_040N",
+        "P3_042N",
+        "P3_043N",
+        "P3_045N",
+        "P3_046N",
+    ]  # 3
+    + [
+        "P3_049N",
+        "P3_051N",
+        "P3_053N",
+        "P3_054N",
+        "P3_056N",
+        "P3_057N",
+        "P3_058N",
+        "P3_060N",
+        "P3_061N",
+        "P3_062N",
+    ]  # 4
+    + ["P3_065N", "P3_066N", "P3_067N", "P3_068N", "P3_069N"]  # 5
+    + ["P3_071N"],  # 6
+}
+
+COL_DICT_DEC_2020_SINGLE = {  # 2020/dec/pl
+    "GEO_ID": "GEOID",
+    "P1_001N": "POP",
+    "P4_001N": "VAP",
+    "P4_002N": "HVAP",
+    "P4_005N": "WVAP",
+    "P3_004N": "BVAP",  # "P4_006N": "BVAP",
+    "P4_007N": "AMINVAP",
+    "P4_008N": "ASIANVAP",
+    "P4_009N": "NHPIVAP",
+    "P4_010N": "OTHERVAP",
+    "P4_011N": "2MOREVAP",
+}
+
+# COL_DICT_DEC_2020 = { # 2020/dec/cd119
+#     "GEO_ID": "GEOID",
+#     "P1_001N": "POP",
+#     "P11_001N": "VAP",
+#     "P11_002N": "HVAP",
+#     "P11_005N": "WVAP",
+#     "P11_006N": "BVAP",
+#     "P11_007N": "AMINVAP",
+#     "P11_008N": "ASIANVAP",
+#     "P11_009N": "NHPIVAP",
+#     "P11_010N": "OTHERVAP",
+#     "P11_011N": "2MOREVAP",
+# }
+
 ################################ Other Info ####################################
 
 
@@ -311,20 +462,42 @@ def flatten(lis_of_lis):
     return [element for lis in lis_of_lis for element in lis]
 
 
-colors = [
-    [232, 23, 23, 256],
-    [23, 131, 232, 256],
+six_colors = [
+    [204, 12, 12, 256],  # [232, 23, 23, 256],
     [232, 138, 23, 256],
     [252, 226, 25, 256],
     [40, 138, 45, 256],
+    [23, 131, 232, 256],
     [114, 66, 245, 256],
 ]
 
-SIX_COLORS = [np.array(color, dtype=float) / 256 for color in colors]
+SIX_COLORS = [np.array(color, dtype=float) / 256 for color in six_colors]
+
+smooth_six_colors = [
+    [230, 41, 11, 256],  # [237, 83, 20, 256],
+    [252, 148, 43, 256],  # [255, 185, 42, 256],
+    [254, 235, 8, 256],
+    [155, 202, 62, 256],
+    [58, 187, 201, 256],
+    [102, 109, 203, 256],
+]
+
+SMOOTH_SIX_COLORS = [
+    np.array(color, dtype=float) / 256 for color in smooth_six_colors
+]
 
 SHORTBURSTS_MAXIMUMS = {
-    "LA": {"BVAP": 33, "POCVAP": 46},
-    "TX": {"BVAP": 6, "HVAP": 48, "POCVAP": 94},
-    "VA": {"BVAP": 12, "POCVAP": 35},
-    "NM": {"HVAP": 38, "POCVAP": 58},
+    "LA": {
+        2010: {"BVAP": 33, "POCVAP": 46},
+        2020: {"BVAP": 33, "POCVAP": 50},
+    },
+    "TX": {
+        2010: {"BVAP": 6, "HVAP": 48, "POCVAP": 94},
+    },
+    "VA": {
+        2010: {"BVAP": 12, "POCVAP": 35},
+    },
+    "NM": {
+        2010: {"HVAP": 38, "POCVAP": 58},
+    },
 }

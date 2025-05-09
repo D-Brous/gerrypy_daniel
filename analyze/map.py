@@ -22,6 +22,7 @@ from constants import (
     ComparativeDistrictMapFunc,
     flatten,
     SIX_COLORS,
+    SMOOTH_SIX_COLORS,
 )
 from data.config import SHPConfig, MapConfig
 from data.demo_df import DemoDataFrame
@@ -827,6 +828,9 @@ class ColorMapGenerator:
                 )
         return ListedColormap(colors)
 
+    def make_cmap_transparent(self, length: int) -> ListedColormap:
+        return ListedColormap(np.zeros((length, 4), dtype=float))
+
 
 class Map:
     def __init__(
@@ -1043,8 +1047,10 @@ class DistrictMap(Map):
         cmap = self.cmg.make_cmap_coloring_shaded(district_adj_mtx, weights)
         assignment = self.partition.get_assignment()
         self.plot_shapes(column=assignment, cmap=cmap, linewidth=5.0)
-        self.plot_boundaries(linestyle="--")
-        self.plot_boundaries(shape_df=self.district_shape_df, linewidth=0.1)
+        # self.plot_boundaries(linestyle="--")
+        # self.plot_boundaries(
+        #    shape_df=self.district_shape_df, linewidth=0.05, linestyle="--"
+        # )
 
         """
         for point, district_id in zip(
@@ -1128,7 +1134,7 @@ class DistrictMap(Map):
             ax=self.ax,
             cmap=cmap,
             linewidth=0.5,
-            # hatch="//",
+            hatch="////////",
             facecolor=None,
             edgecolor="black",
         )
@@ -1138,6 +1144,33 @@ class DistrictMap(Map):
         #     linewidth=0.3
         # )
         self.plot_colored_maj_min_legend(col, on_fig=True)
+
+    def districts_colored_hashed(
+        self,
+        district_weights: list[float],
+        col: VapCol,
+    ):
+        district_adj_mtx = self.get_adj_mtx(self.district_shape_df)
+        cmap = self.cmg.make_cmap_coloring(district_adj_mtx)
+        # cmap = self.cmg.make_cmap_coloring_shaded(district_adj_mtx, district_weights)
+        assignment = self.partition.get_assignment()
+        self.plot_shapes(column=assignment, cmap=cmap, linewidth=5.0)
+        # self.plot_boundaries(linestyle="--")
+        self.plot_boundaries(shape_df=self.district_shape_df, linewidth=0.1)
+        maj_district_ids = [
+            id
+            for id in range(self.partition.n_districts)
+            if district_weights[id] > 0.5
+        ]
+        subregion_df = self.district_shape_df.get_subregion_df(maj_district_ids)
+        subregion_df.plot(
+            ax=self.ax,
+            cmap=self.cmg.make_cmap_transparent(len(subregion_df)),
+            linewidth=0.5,
+            hatch="////////",
+            facecolor=None,
+            edgecolor="black",
+        )
 
 
 class MapGenerator:
@@ -1190,7 +1223,9 @@ class MapGenerator:
             return True
 
     def save_fig(self, fig: Figure, pdf_path: str):
-        fig.savefig(pdf_path, bbox_inches="tight", format="pdf", dpi=300)
+        fig.savefig(
+            pdf_path, bbox_inches="tight", pad_inches=0, format="pdf", dpi=300
+        )
 
     def get_diff_district_ids(
         self, prev_partition: Optional[Partition], curr_partition: Partition
@@ -1330,7 +1365,7 @@ class MapGenerator:
             elif district_map_func == "colored_cvap_prop_shaded":
                 weights = self.get_cvap_prop_shading_weights(curr_partition)
                 district_map.districts_colored_shaded(
-                    weights, self.shp_config.col
+                    weights, self.shp_config.col, legend=False
                 )
             elif district_map_func == "cvap_prop_grayscale":
                 weights = cvap_props(
@@ -1345,6 +1380,13 @@ class MapGenerator:
                 )
                 district_map.districts_colored_hashed_cgus_shaded(
                     district_weights, cgu_weights, self.shp_config.col
+                )
+            elif district_map_func == "districts_colored_hashed":
+                district_weights = cvap_props(
+                    self.shp_config.col, curr_partition, self.demo_df
+                )
+                district_map.districts_colored_hashed(
+                    district_weights, self.shp_config.col
                 )
             else:
                 raise ValueError("Invalid District Map Function Name")
@@ -1361,7 +1403,7 @@ class MapGenerator:
                     plan_id, ip_str, tree
                 )
                 district_map.plot_boundaries(
-                    shape_df=layer_above_shape_df, linewidth=0.4
+                    shape_df=layer_above_shape_df, linewidth=1.0  # 0.6
                 )
             self.save_fig(fig, pdf_path)
 
@@ -1474,6 +1516,14 @@ class MapGenerator:
                     district_maps[j].districts_colored_shaded(
                         weights, self.shp_config.col, legend=False
                     )
+            elif comparative_district_map_func == "districts_colored_hashed":
+                for j in range(2):
+                    district_weights = cvap_props(
+                        self.shp_config.col, partitions[j], self.demo_df
+                    )
+                    district_maps[j].districts_colored_hashed(
+                        district_weights, self.shp_config.col
+                    )
             elif (
                 comparative_district_map_func
                 == "maj_cvap_outlined_cvap_prop_shaded_cgus"
@@ -1505,6 +1555,7 @@ if __name__ == "__main__":
     shp_config.col = "POCVAP"
     shp_config.save_dirname = "state_house_POCVAP"
 
+    plan_id = 0
     # partitions_shp = Partitions.from_csv(
     #     os.path.join(shp_config.get_save_path(), "partitions", "shp.csv")
     # )
@@ -1512,28 +1563,29 @@ if __name__ == "__main__":
     #     os.path.join(
     #         shp_config.get_save_path(),
     #         "partitions",
-    #         "shp_p4_priority_4_opt_no_br.csv",
+    #         f"shp_p{plan_id}_priority_4_opt_no_br.csv",
     #     )
     # )
     # partitions_new = Partitions()
-    # partitions_new.set_plan(0, partitions_shp.get_plan(4))
-    # for id in [0, 1, 2, 3, 4]:
+    # partitions_new.set_plan(0, partitions_shp.get_plan(plan_id))
+    # for id in partitions_old.get_plan_ids():
     #     partitions_new.set_plan(id + 1, partitions_old.get_plan(id))
     # partitions_new.to_csv(
     #     os.path.join(
     #         shp_config.get_save_path(),
     #         "partitions",
-    #         "shp_p4_priority_4_opt_no_br_with_init.csv",
+    #         f"shp_p{plan_id}_priority_4_opt_no_br_with_init.csv",
     #     ),
     #     shp_config,
     # )
 
     map_config = MapConfig(
         "LA",
-        2010,
+        2020,
         "block_group",
         None,
-        partitions_file_name="shp_p4_priority_4_opt_no_br_with_init.csv",  # "shp.csv",
+        partitions_file_name=f"shp_p{plan_id}_priority_4_opt_no_br_with_init.csv",  # "shp_br.csv",
+        # colors=SMOOTH_SIX_COLORS,
         cmap_name="Purples",
     )
 
@@ -1542,14 +1594,14 @@ if __name__ == "__main__":
     # map_generator.draw_cgu_map("six_colored")
 
     # map_generator.draw_district_maps(
-    #     "colored_cvap_prop_shaded",
-    #     plan_ids=[4],
+    #     "districts_colored_hashed",  # "colored_cvap_prop_shaded",
+    #     plan_ids=[0],
     #     highlight_diff=False,
-    #     outline_layer_above=False,
+    #     outline_layer_above=True,
     # )
 
     map_generator.draw_comparative_district_maps(
-        "colored_cvap_prop_shaded",  # plan_ids=[0, 1]
+        "districts_colored_hashed"  # "colored_cvap_prop_shaded",  # plan_ids=[0, 1]
     )
 
     # TODO: add a boolean in the config for adding numbers or representative points to districts or cgus

@@ -7,14 +7,14 @@ from optimize.generate import ColumnGenerator
 from optimize.postprocess import PostProcessor
 
 state = "VA"
-col = "BVAP"
+col = "POCVAP"
 n = 4
 pop_tol = 0.02
 
 
 state_config = {
     "state": state,
-    "year": 2010,
+    "year": 2020,
     "granularity": "block_group",
     "subregion": None,
 }
@@ -68,15 +68,15 @@ local_reopt_config = {
 }
 pp_config = PostProcessorConfig(**state_config, **local_reopt_config)
 if __name__ == "__main__":
-    # cg = ColumnGenerator(shp_config)
-    # cg.run_shp(
-    #     save_config=True,
-    #     save_tree=True,
-    #     save_partitions=True,
-    #     logging=True,
-    #     printing=True,
-    #     run_beta_reoptimization=True,
-    # )
+    cg = ColumnGenerator(shp_config)
+    cg.run_shp(
+        save_config=True,
+        save_tree=True,
+        save_partitions=True,
+        logging=True,
+        printing=True,
+        run_beta_reoptimization=True,
+    )
 
     shp_config.n_beta_reoptimize_steps = 0
     post_processor = PostProcessor(shp_config, pp_config)

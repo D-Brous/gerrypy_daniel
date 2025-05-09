@@ -7,14 +7,14 @@ from optimize.generate import ColumnGenerator
 from optimize.postprocess import PostProcessor
 
 state = "TX"
-col = "HVAP"
+col = "POCVAP"
 n = 4
 pop_tol = 0.02
 
 
 state_config = {
     "state": state,
-    "year": 2010,
+    "year": 2020,
     "granularity": "block_group",
     "subregion": None,
 }
@@ -71,22 +71,22 @@ if __name__ == "__main__":
     from optimize.tree import SHPTree
     import os
 
-    tree = SHPTree.from_file(
-        os.path.join(shp_config.get_save_path(), "tree.pickle")
-    )
-    cg = ColumnGenerator(shp_config, tree=tree)
-    # cg.run_shp(
-    #     save_config=True,
-    #     save_tree=True,
-    #     save_partitions=True,
-    #     logging=True,
-    #     printing=True,
-    #     run_beta_reoptimization=True,
+    # tree = SHPTree.from_file(
+    #     os.path.join(shp_config.get_save_path(), "tree.pickle")
     # )
-    cg.run_beta_reopt(save_partitions=True, logging=True, printing=True)
+    cg = ColumnGenerator(shp_config)
+    cg.run_shp(
+        save_config=True,
+        save_tree=True,
+        save_partitions=True,
+        logging=True,
+        printing=True,
+        run_beta_reoptimization=True,
+    )
+    # cg.run_beta_reopt(save_partitions=True, logging=True, printing=True)
 
-    # shp_config.n_beta_reoptimize_steps = 0
-    # post_processor = PostProcessor(shp_config, pp_config)
-    # plan_ids = list(range(10))
-    # for plan_id in plan_ids:
-    #     post_processor.priority_n_opt(n, plan_id)
+    shp_config.n_beta_reoptimize_steps = 0
+    post_processor = PostProcessor(shp_config, pp_config)
+    plan_ids = list(range(10))
+    for plan_id in plan_ids:
+        post_processor.priority_n_opt(n, plan_id)

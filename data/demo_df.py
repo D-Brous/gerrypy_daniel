@@ -13,13 +13,17 @@ class DemoDataFrame(pd.DataFrame):
         return cls(df)
 
     @classmethod
-    def from_config(cls, state_config: StateConfig) -> "DemoDataFrame":
+    def from_config(
+        cls,
+        state_config: StateConfig,
+        interpretation: constants.Interpretation = "any_part",
+    ) -> "DemoDataFrame":
         demo_df = (
             pd.read_csv(
                 os.path.join(
                     constants.DEMO_DATA_PATH,
                     state_config.get_dirname(),
-                    "pops.csv",
+                    f"pops_{interpretation}.csv",
                 ),
                 low_memory=False,
             )
